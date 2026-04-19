@@ -1,0 +1,150 @@
+@using Praetorium.Bridge.Configuration
+
+<div class="form-group param-list-editor">
+    <div class="section-header">
+        <label>@Title:</label>
+        <button class="add-button small" @onclick="ShowAddForm">+ Add Parameter</button>
+    </div>
+
+    @if (showAddForm)
+    {
+        <div class="add-form">
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Name:</label>
+                    <input type="text" @bind="newName" class="form-input" placeholder="e.g., userId" />
+                </div>
+                <div class="form-group">
+                    <label>Type:</label>
+                    <select @bind="newType" class="form-input">
+                        <option value="string">string</option>
+                        <option value="number">number</option>
+                        <option value="integer">integer</option>
+                        <option value="boolean">boolean</option>
+                        <option value="object">object</option>
+                        <option value="array">array</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" @bind="newRequired" />
+                        Required
+                    </label>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Description:</label>
+                <input type="text" @bind="newDescription" class="form-input" placeholder="Describe what this parameter does..." />
+            </div>
+            @if (!string.IsNullOrEmpty(error))
+            {
+                <div class="status-message error">@error</div>
+            }
+            <div class="form-actions">
+                <button class="cancel-button" @onclick="CancelAdd">Cancel</button>
+                <button class="save-button" @onclick="AddParameter">Add</button>
+            </div>
+        </div>
+    }
+
+    @if (Parameters.Count == 0 && !showAddForm)
+    {
+        <p class="empty-state small">@EmptyText</p>
+    }
+    else if (Parameters.Count > 0)
+    {
+        <div class="params-list">
+            @foreach (var param in Parameters.ToList())
+            {
+                <div class="param-item">
+                    <div class="param-header">
+                        <div class="param-name">@param.Key</div>
+                        <div class="param-badges">
+                            <span class="param-type">@param.Value.Type</span>
+                            @if (param.Value.Required)
+                            {
+                                <span class="param-required">required</span>
+                            }
+                        </div>
+                        <button class="remove-button" @onclick="() => RemoveParameter(param.Key)" title="Remove parameter">×</button>
+                    </div>
+                    @if (!string.IsNullOrEmpty(param.Value.Description))
+                    {
+                        <div class="param-description">@param.Value.Description</div>
+                    }
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter]
+    public required Dictionary<string, ParameterDefinition> Parameters { get; set; }
+
+    [Parameter]
+    public string Title { get; set; } = "Parameters";
+
+    [Parameter]
+    public string EmptyText { get; set; } = "No parameters defined.";
+
+    private bool showAddForm;
+    private string newName = string.Empty;
+    private string newType = "string";
+    private string newDescription = string.Empty;
+    private bool newRequired;
+    private string error = string.Empty;
+
+    private void ShowAddForm()
+    {
+        showAddForm = true;
+        newName = string.Empty;
+        newType = "string";
+        newDescription = string.Empty;
+        newRequired = false;
+        error = string.Empty;
+    }
+
+    private void CancelAdd()
+    {
+        showAddForm = false;
+        error = string.Empty;
+    }
+
+    private void AddParameter()
+    {
+        error = string.Empty;
+
+        if (string.IsNullOrWhiteSpace(newName))
+        {
+            error = "Parameter name is required.";
+            return;
+        }
+
+        if (!System.Text.RegularExpressions.Regex.IsMatch(newName, @"^[a-zA-Z][a-zA-Z0-9_]*$"))
+        {
+            error = "Parameter name must start with a letter and contain only letters, digits, and underscores.";
+            return;
+        }
+
+        if (Parameters.ContainsKey(newName))
+        {
+            error = $"A parameter named '{newName}' already exists.";
+            return;
+        }
+
+        Parameters[newName] = new ParameterDefinition
+        {
+            Type = newType,
+            Description = newDescription,
+            Required = newRequired,
+        };
+
+        showAddForm = false;
+    }
+
+    private void RemoveParameter(string name)
+    {
+        Parameters.Remove(name);
+    }
+}

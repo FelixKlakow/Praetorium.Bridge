@@ -1,0 +1,191 @@
+@page "/prompts"
+@rendermode InteractiveServer
+@using Praetorium.Bridge.Web.Services
+@inject ConfigurationService ConfigService
+@inject NavigationManager Navigation
+
+<PageTitle>Prompts - Praetorium.Bridge</PageTitle>
+
+<div class="prompts-container">
+    <div class="prompts-header">
+        <div>
+            <h1>Prompts</h1>
+            <p class="subtitle">Manage prompt templates for your agents</p>
+        </div>
+        <button class="save-button" @onclick="ShowCreateForm">+ New Prompt</button>
+    </div>
+
+    @if (showCreateForm)
+    {
+        <div class="add-form">
+            <div class="form-group">
+                <label>File Name:</label>
+                <input type="text" @bind="newFileName" class="form-input" placeholder="e.g., my-prompt.md" />
+            </div>
+            @if (!string.IsNullOrEmpty(createError))
+            {
+                <div class="status-message error">@createError</div>
+            }
+            <div class="form-actions">
+                <button class="cancel-button" @onclick="CancelCreate">Cancel</button>
+                <button class="save-button" @onclick="CreatePromptAsync">Create</button>
+            </div>
+        </div>
+    }
+
+    <div class="prompts-content">
+        @if (isLoading)
+        {
+            <p class="loading-state">Loading prompts...</p>
+        }
+        else if (promptFiles.Count == 0)
+        {
+            <div class="empty-state">
+                <p>No prompt files yet</p>
+                <p class="hint">Click "New Prompt" to create your first template.</p>
+            </div>
+        }
+        else
+        {
+            <div class="prompts-list">
+                @foreach (var prompt in promptFiles)
+                {
+                    <a href="prompts/@Uri.EscapeDataString(prompt.Name)" class="prompt-card">
+                        <span class="prompt-icon">📄</span>
+                        <span class="prompt-name">@prompt.Name</span>
+                        @if (prompt.ReferencingTools.Count > 0)
+                        {
+                            <span class="prompt-refs" title="Used by @string.Join(", ", prompt.ReferencingTools)">
+                                Used by @prompt.ReferencingTools.Count tool@(prompt.ReferencingTools.Count == 1 ? "" : "s")
+                            </span>
+                        }
+                        else
+                        {
+                            <span class="prompt-refs prompt-refs-unused">Unused</span>
+                        }
+                    </a>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    private sealed record PromptEntry(string Name, IReadOnlyList<string> ReferencingTools);
+
+    private List<PromptEntry> promptFiles = new();
+    private bool isLoading = true;
+    private bool showCreateForm;
+    private string newFileName = string.Empty;
+    private string createError = string.Empty;
+
+    protected override void OnInitialized()
+    {
+        LoadPrompts();
+    }
+
+    private void LoadPrompts()
+    {
+        try
+        {
+            var onDisk = ConfigService.ListPromptFiles();
+            var config = ConfigService.GetConfiguration();
+
+            var referencesByFile = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            if (config?.Tools != null)
+            {
+                foreach (var (toolName, tool) in config.Tools)
+                {
+                    var promptFile = tool?.Agent?.PromptFile;
+                    if (string.IsNullOrWhiteSpace(promptFile))
+                        continue;
+
+                    var normalized = NormalizeReference(promptFile);
+                    if (!referencesByFile.TryGetValue(normalized, out var list))
+                    {
+                        list = new List<string>();
+                        referencesByFile[normalized] = list;
+                    }
+                    list.Add(toolName);
+                }
+            }
+
+            var names = new HashSet<string>(onDisk, StringComparer.OrdinalIgnoreCase);
+            foreach (var referenced in referencesByFile.Keys)
+            {
+                names.Add(referenced);
+            }
+
+            promptFiles = names
+                .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+                .Select(n => new PromptEntry(
+                    n,
+                    referencesByFile.TryGetValue(n, out var tools) ? tools : new List<string>()))
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Error loading prompts: {ex}");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private static string NormalizeReference(string promptFile)
+    {
+        var normalized = promptFile.Replace('\\', '/').TrimStart('/');
+        if (normalized.StartsWith("./", StringComparison.Ordinal))
+            normalized = normalized.Substring(2);
+        if (normalized.StartsWith("prompts/", StringComparison.OrdinalIgnoreCase))
+            normalized = normalized.Substring("prompts/".Length);
+        return normalized;
+    }
+
+    private void ShowCreateForm()
+    {
+        showCreateForm = true;
+        newFileName = string.Empty;
+        createError = string.Empty;
+    }
+
+    private void CancelCreate()
+    {
+        showCreateForm = false;
+        createError = string.Empty;
+    }
+
+    private async Task CreatePromptAsync()
+    {
+        createError = string.Empty;
+
+        var trimmed = (newFileName ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(trimmed))
+        {
+            createError = "File name is required";
+            return;
+        }
+
+        if (!trimmed.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+        {
+            trimmed += ".md";
+        }
+
+        try
+        {
+            if (ConfigService.PromptFileExists(trimmed))
+            {
+                createError = $"A prompt named '{trimmed}' already exists";
+                return;
+            }
+
+            await ConfigService.SavePromptContentAsync(trimmed, string.Empty);
+            Navigation.NavigateTo($"prompts/{Uri.EscapeDataString(trimmed)}");
+        }
+        catch (Exception ex)
+        {
+            createError = $"Error: {ex.Message}";
+        }
+    }
+}

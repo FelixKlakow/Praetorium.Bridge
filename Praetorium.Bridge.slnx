@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Praetorium.Bridge.CopilotProvider/Praetorium.Bridge.CopilotProvider.csproj" />
+    <Project Path="src/Praetorium.Bridge.Web/Praetorium.Bridge.Web.csproj" />
+    <Project Path="src/Praetorium.Bridge/Praetorium.Bridge.csproj" />
+  </Folder>
+  <Folder Name="/.github/">
+    <File Path=".github/copilot-instructions.md" />
+  </Folder>
+  <Folder Name="/docs/">
+    <File Path="praetorium-bridge-design.md" />
+  </Folder>
+</Solution>

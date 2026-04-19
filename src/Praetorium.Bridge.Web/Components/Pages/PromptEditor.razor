@@ -1,0 +1,162 @@
+@page "/prompts/{FileName}"
+@rendermode InteractiveServer
+@inject ConfigurationService ConfigService
+@inject NavigationManager Navigation
+@implements IAsyncDisposable
+
+<PageTitle>Edit Prompt - Praetorium.Bridge</PageTitle>
+
+<div class="prompt-editor-container">
+    <div class="editor-header">
+        <div>
+            <h1>Prompt Editor</h1>
+            <p class="subtitle">@FileName @(isNewFile ? "(new file)" : string.Empty)</p>
+        </div>
+        <div class="header-actions">
+            <a class="cancel-button" href="prompts">Back</a>
+            @if (!isNewFile)
+            {
+                <button class="delete-button" @onclick="DeleteAsync" disabled="@isSaving">Delete</button>
+            }
+            <button class="save-button" @onclick="SaveAsync" disabled="@isSaving">
+                @(isSaving ? "Saving..." : "Save")
+            </button>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(saveStatus))
+    {
+        <div class="status-message @(saveStatus.StartsWith("Error") ? "error" : "success")">
+            @saveStatus
+        </div>
+    }
+
+    <div class="editor-layout">
+        <div class="editor-main">
+            <textarea class="prompt-textarea" @bind="content" @bind:event="oninput" placeholder="Enter your prompt template here..."></textarea>
+        </div>
+
+        <div class="editor-sidebar">
+            <div class="placeholders-panel">
+                <h3>Detected Placeholders</h3>
+                @if (DetectedPlaceholders.Count == 0)
+                {
+                    <p class="empty">No placeholders detected</p>
+                }
+                else
+                {
+                    <div class="placeholders-list">
+                        @foreach (var placeholder in DetectedPlaceholders)
+                        {
+                            <div class="placeholder-item">
+                                <code>@placeholder</code>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+
+            <div class="info-panel">
+                <h3>Info</h3>
+                <div class="info-item">
+                    <span class="label">Lines:</span>
+                    <span class="value">@(content?.Split('\n').Length ?? 0)</span>
+                </div>
+                <div class="info-item">
+                    <span class="label">Characters:</span>
+                    <span class="value">@(content?.Length ?? 0)</span>
+                </div>
+                <div class="info-item">
+                    <span class="label">Words:</span>
+                    <span class="value">@GetWordCount(content)</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private static readonly System.Text.RegularExpressions.Regex PlaceholderRegex =
+        new(@"\{(\w+)\}", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    [Parameter]
+    public required string FileName { get; set; }
+
+    private string content = string.Empty;
+    private string saveStatus = string.Empty;
+    private bool isSaving;
+    private bool isNewFile;
+
+    private List<string> DetectedPlaceholders => string.IsNullOrEmpty(content)
+        ? new List<string>()
+        : PlaceholderRegex.Matches(content)
+            .Cast<System.Text.RegularExpressions.Match>()
+            .Select(m => m.Groups[1].Value)
+            .Distinct()
+            .OrderBy(p => p, StringComparer.Ordinal)
+            .ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            isNewFile = !ConfigService.PromptFileExists(FileName);
+            content = await ConfigService.GetPromptContentAsync(FileName);
+        }
+        catch (Exception ex)
+        {
+            saveStatus = $"Error: {ex.Message}";
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        if (isSaving)
+            return;
+
+        isSaving = true;
+        try
+        {
+            await ConfigService.SavePromptContentAsync(FileName, content);
+            saveStatus = "Saved successfully";
+            isNewFile = false;
+            await Task.Delay(2000);
+            saveStatus = string.Empty;
+        }
+        catch (Exception ex)
+        {
+            saveStatus = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            isSaving = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task DeleteAsync()
+    {
+        try
+        {
+            ConfigService.DeletePromptFile(FileName);
+            Navigation.NavigateTo("prompts");
+        }
+        catch (Exception ex)
+        {
+            saveStatus = $"Error: {ex.Message}";
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private int GetWordCount(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return 0;
+        return text.Split(new[] { ' ', '\n', '\r', '\t' }, StringSplitOptions.RemoveEmptyEntries).Length;
+    }
+
+    async ValueTask IAsyncDisposable.DisposeAsync()
+    {
+        await Task.CompletedTask;
+    }
+}

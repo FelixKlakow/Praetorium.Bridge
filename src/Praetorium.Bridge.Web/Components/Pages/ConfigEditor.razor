@@ -1,0 +1,392 @@
+@page "/config"
+@rendermode InteractiveServer
+@using Praetorium.Bridge.Configuration
+@using Praetorium.Bridge.Web.Services
+@inject ConfigurationService ConfigService
+@inject ISessionManager SessionManager
+
+<PageTitle>Configuration - Praetorium.Bridge</PageTitle>
+
+<div class="config-container">
+    <div class="config-header">
+        <h1>Configuration Editor</h1>
+        <p class="subtitle">Manage tools, agents, and bridge settings</p>
+    </div>
+
+    <div class="config-layout">
+        <div class="sidebar">
+            <div class="sidebar-section">
+                <div class="section-header">
+                    <div class="section-title">Tools</div>
+                    <button class="add-button" @onclick="ShowAddTool" title="Add new tool">+</button>
+                </div>
+                @if (configuration?.Tools != null && configuration.Tools.Count > 0)
+                {
+                    <div class="nav-list">
+                        @foreach (var toolName in configuration.Tools.Keys)
+                        {
+                            var capturedName = toolName;
+                            <button class="nav-item @(selectedTool == capturedName ? "active" : "")"
+                                    @onclick="() => SelectTool(capturedName)">
+                                <span class="nav-icon">@GetToolIcon()</span>
+                                @capturedName
+                            </button>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <p class="empty-section">No tools configured</p>
+                }
+            </div>
+
+            <div class="sidebar-section">
+                <div class="section-header">
+                    <div class="section-title">Agent Sources</div>
+                    <button class="add-button" @onclick="ShowAddAgentSource" title="Add new agent source">+</button>
+                </div>
+                @if (configuration?.AgentToolSources != null && configuration.AgentToolSources.Count > 0)
+                {
+                    <div class="nav-list">
+                        @foreach (var sourceName in configuration.AgentToolSources.Keys)
+                        {
+                            var capturedName = sourceName;
+                            <button class="nav-item @(selectedAgent == capturedName ? "active" : "")"
+                                    @onclick="() => SelectAgent(capturedName)">
+                                <span class="nav-icon">@@</span>
+                                @capturedName
+                            </button>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <p class="empty-section">No agent sources</p>
+                }
+            </div>
+
+            <div class="sidebar-section">
+                <div class="section-title">Defaults</div>
+                <button class="nav-item @(selectedView == "defaults" ? "active" : "")"
+                        @onclick="SelectDefaults">
+                    <span class="nav-icon">⚙</span>
+                    Default Settings
+                </button>
+            </div>
+        </div>
+
+        <div class="editor-panel">
+            @if (showAddToolForm)
+            {
+                <div class="editor-content">
+                    <h2>Create New Tool</h2>
+                    <div class="new-tool-form">
+                        <div class="form-group">
+                            <label for="toolName">Tool Name</label>
+                            <input type="text" id="toolName" @bind="newToolName" class="form-input" placeholder="e.g., my-custom-tool" />
+                        </div>
+                        <div class="form-group">
+                            <label for="toolDescription">Description</label>
+                            <textarea id="toolDescription" @bind="newToolDescription" class="form-textarea" rows="3" placeholder="Describe what this tool does..."></textarea>
+                        </div>
+                        @if (!string.IsNullOrEmpty(addToolError))
+                        {
+                            <div class="status-message error">@addToolError</div>
+                        }
+                        <div class="form-actions">
+                            <button class="cancel-button" @onclick="CancelAddTool">Cancel</button>
+                            <button class="save-button" @onclick="CreateToolAsync">Create Tool</button>
+                        </div>
+                    </div>
+                </div>
+            }
+            else if (showAddAgentSourceForm)
+            {
+                <div class="editor-content">
+                    <h2>Create New Agent Source</h2>
+                    <div class="new-tool-form">
+                        <div class="form-group">
+                            <label for="sourceName">Source Name</label>
+                            <input type="text" id="sourceName" @bind="newSourceName" class="form-input" placeholder="e.g., filesystem" />
+                        </div>
+                        <div class="form-group">
+                            <label>Type</label>
+                            <select @bind="newSourceType" class="form-input">
+                                <option value="stdio">stdio (command)</option>
+                                <option value="http">http (URL)</option>
+                            </select>
+                        </div>
+                        @if (!string.IsNullOrEmpty(addSourceError))
+                        {
+                            <div class="status-message error">@addSourceError</div>
+                        }
+                        <div class="form-actions">
+                            <button class="cancel-button" @onclick="CancelAddAgentSource">Cancel</button>
+                            <button class="save-button" @onclick="CreateAgentSourceAsync">Create Source</button>
+                        </div>
+                    </div>
+                </div>
+            }
+            else if (selectedTool != null && currentTool != null)
+            {
+                <ToolEditor Tool="currentTool" ToolName="selectedTool" OnSave="SaveToolAsync" OnDelete="DeleteToolAsync" AvailableToolSources="GetAvailableToolSources()" />
+            }
+            else if (selectedAgent != null && currentAgentSource != null)
+            {
+                <AgentSourceEditor SourceName="selectedAgent" Source="currentAgentSource" OnSave="SaveAgentSourceAsync" OnDelete="DeleteAgentSourceAsync" />
+            }
+            else if (selectedView == "defaults" && configuration?.Defaults != null)
+            {
+                <DefaultsEditor Defaults="configuration.Defaults" OnSave="SaveDefaultsAsync" />
+            }
+            else
+            {
+                <div class="editor-content">
+                    <div class="placeholder-panel">
+                        <p>Select a tool or configuration item to edit</p>
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private BridgeConfiguration? configuration;
+    private string? selectedTool;
+    private ToolDefinition? currentTool;
+    private string? selectedAgent;
+    private AgentToolSource? currentAgentSource;
+    private string selectedView = "";
+
+    // Add tool form
+    private bool showAddToolForm;
+    private string newToolName = "";
+    private string newToolDescription = "";
+    private string addToolError = "";
+
+    // Add agent source form
+    private bool showAddAgentSourceForm;
+    private string newSourceName = "";
+    private string newSourceType = "stdio";
+    private string addSourceError = "";
+
+    protected override void OnInitialized()
+    {
+        configuration = ConfigService.GetConfiguration();
+        configuration.Defaults ??= new DefaultsConfiguration();
+        configuration.AgentToolSources ??= new Dictionary<string, AgentToolSource>();
+    }
+
+    private void SelectTool(string toolName)
+    {
+        selectedTool = toolName;
+        currentTool = ConfigService.GetToolDefinition(toolName);
+        selectedAgent = null;
+        currentAgentSource = null;
+        selectedView = "";
+        ResetAllForms();
+    }
+
+    private void SelectAgent(string agentName)
+    {
+        selectedAgent = agentName;
+        currentAgentSource = configuration?.AgentToolSources != null
+            && configuration.AgentToolSources.TryGetValue(agentName, out var src)
+            ? src
+            : null;
+        selectedTool = null;
+        currentTool = null;
+        selectedView = "";
+        ResetAllForms();
+    }
+
+    private void SelectDefaults()
+    {
+        selectedView = "defaults";
+        selectedTool = null;
+        currentTool = null;
+        selectedAgent = null;
+        currentAgentSource = null;
+        ResetAllForms();
+    }
+
+    private void ResetAllForms()
+    {
+        showAddToolForm = false;
+        showAddAgentSourceForm = false;
+    }
+
+    private void ShowAddTool()
+    {
+        showAddToolForm = true;
+        showAddAgentSourceForm = false;
+        selectedTool = null;
+        currentTool = null;
+        selectedAgent = null;
+        currentAgentSource = null;
+        selectedView = "";
+        newToolName = "";
+        newToolDescription = "";
+        addToolError = "";
+    }
+
+    private void CancelAddTool()
+    {
+        showAddToolForm = false;
+        addToolError = "";
+    }
+
+    private async Task CreateToolAsync()
+    {
+        addToolError = "";
+
+        if (string.IsNullOrWhiteSpace(newToolName))
+        {
+            addToolError = "Tool name is required";
+            return;
+        }
+
+        if (!System.Text.RegularExpressions.Regex.IsMatch(newToolName, @"^[a-zA-Z][a-zA-Z0-9_-]*$"))
+        {
+            addToolError = "Tool name must start with a letter and contain only letters, numbers, hyphens, and underscores";
+            return;
+        }
+
+        if (configuration?.Tools?.ContainsKey(newToolName) == true)
+        {
+            addToolError = $"A tool named '{newToolName}' already exists";
+            return;
+        }
+
+        try
+        {
+            var newTool = new ToolDefinition
+            {
+                Description = newToolDescription,
+                Parameters = new Dictionary<string, ParameterDefinition>(),
+                Agent = new AgentConfiguration(),
+                Session = new SessionConfiguration(),
+                Signaling = new SignalingConfiguration()
+            };
+
+            await ConfigService.SaveToolDefinitionAsync(newToolName, newTool);
+
+            configuration = ConfigService.GetConfiguration();
+            SelectTool(newToolName);
+        }
+        catch (Exception ex)
+        {
+            addToolError = $"Error creating tool: {ex.Message}";
+        }
+    }
+
+    private void ShowAddAgentSource()
+    {
+        showAddAgentSourceForm = true;
+        showAddToolForm = false;
+        selectedTool = null;
+        currentTool = null;
+        selectedAgent = null;
+        currentAgentSource = null;
+        selectedView = "";
+        newSourceName = "";
+        newSourceType = "stdio";
+        addSourceError = "";
+    }
+
+    private void CancelAddAgentSource()
+    {
+        showAddAgentSourceForm = false;
+        addSourceError = "";
+    }
+
+    private async Task CreateAgentSourceAsync()
+    {
+        addSourceError = "";
+
+        if (string.IsNullOrWhiteSpace(newSourceName))
+        {
+            addSourceError = "Source name is required";
+            return;
+        }
+
+        if (!System.Text.RegularExpressions.Regex.IsMatch(newSourceName, @"^[a-zA-Z][a-zA-Z0-9_-]*$"))
+        {
+            addSourceError = "Source name must start with a letter and contain only letters, numbers, hyphens, and underscores";
+            return;
+        }
+
+        if (configuration?.AgentToolSources?.ContainsKey(newSourceName) == true)
+        {
+            addSourceError = $"An agent source named '{newSourceName}' already exists";
+            return;
+        }
+
+        try
+        {
+            var newSource = new AgentToolSource
+            {
+                Type = newSourceType,
+                Headers = new Dictionary<string, string>()
+            };
+
+            await ConfigService.SaveAgentToolSourceAsync(newSourceName, newSource);
+            configuration = ConfigService.GetConfiguration();
+            SelectAgent(newSourceName);
+        }
+        catch (Exception ex)
+        {
+            addSourceError = $"Error creating source: {ex.Message}";
+        }
+    }
+
+    private async Task SaveToolAsync()
+    {
+        if (selectedTool != null && currentTool != null)
+        {
+            await ConfigService.SaveToolDefinitionAsync(selectedTool, currentTool);
+        }
+    }
+
+    private async Task DeleteToolAsync()
+    {
+        if (selectedTool == null) return;
+
+        await ConfigService.DeleteToolDefinitionAsync(selectedTool);
+        configuration = ConfigService.GetConfiguration();
+        selectedTool = null;
+        currentTool = null;
+    }
+
+    private async Task SaveAgentSourceAsync(AgentToolSource source)
+    {
+        if (selectedAgent == null) return;
+
+        await ConfigService.SaveAgentToolSourceAsync(selectedAgent, source);
+        configuration = ConfigService.GetConfiguration();
+    }
+
+    private async Task DeleteAgentSourceAsync()
+    {
+        if (selectedAgent == null) return;
+
+        await ConfigService.DeleteAgentToolSourceAsync(selectedAgent);
+        configuration = ConfigService.GetConfiguration();
+        selectedAgent = null;
+        currentAgentSource = null;
+    }
+
+    private async Task SaveDefaultsAsync(DefaultsConfiguration defaults)
+    {
+        await ConfigService.SaveDefaultsAsync(defaults);
+        configuration = ConfigService.GetConfiguration();
+    }
+
+    private static string GetToolIcon() => "🔧";
+
+    private List<string> GetAvailableToolSources()
+    {
+        return configuration?.AgentToolSources?.Keys.ToList() ?? new List<string>();
+    }
+}

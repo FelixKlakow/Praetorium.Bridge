@@ -1,0 +1,66 @@
+@implements IAsyncDisposable
+
+<div class="activity-log">
+    <div class="activity-header">
+        <h3>Activity Log</h3>
+    </div>
+
+    <div class="log-entries" @ref="logContainer">
+        @if (Entries == null || Entries.Count == 0)
+        {
+            <div class="empty-log">No activity yet</div>
+        }
+        else
+        {
+            @foreach (var entry in Entries)
+            {
+                <div class="log-entry">
+                    <div class="entry-time">@entry.Timestamp.ToString("HH:mm:ss")</div>
+                    <div class="entry-content">
+                        <div class="entry-tool">@entry.ToolName</div>
+                        <div class="entry-event">@entry.Event</div>
+                        @if (!string.IsNullOrEmpty(entry.Details))
+                        {
+                            <div class="entry-details">@entry.Details</div>
+                        }
+                    </div>
+                </div>
+            }
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public List<ActivityLogEntry>? Entries { get; set; }
+
+    private ElementReference logContainer;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // Scroll to bottom on first render
+            await ScrollToBottom();
+        }
+    }
+
+    private async Task ScrollToBottom()
+    {
+        try
+        {
+            // Scroll the log container to the bottom
+            // This would require JS interop in a real implementation
+            await Task.CompletedTask;
+        }
+        catch
+        {
+            // Ignore scroll errors
+        }
+    }
+
+    async ValueTask IAsyncDisposable.DisposeAsync()
+    {
+        await Task.CompletedTask;
+    }
+}

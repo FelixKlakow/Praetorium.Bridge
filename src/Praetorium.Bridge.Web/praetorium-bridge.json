@@ -1,0 +1,141 @@
+{
+  "server": {
+    "port": 5100,
+    "basePath": "/mcp",
+    "bindAddress": "localhost"
+  },
+  "defaults": {
+    "agent": {
+      "tools": []
+    },
+    "session": {
+      "mode": "PerConnection",
+      "poolTimeoutMinutes": 30,
+      "responseTimeoutMinutes": 10,
+      "responseTimeoutSeconds": 600
+    },
+    "signaling": {
+      "keepaliveIntervalSeconds": 15,
+      "tools": [
+        {
+          "name": "respond",
+          "description": "Send a final response back to the caller and end the agent turn.",
+          "parameters": {
+            "message": {
+              "type": "string",
+              "description": "The response message to send.",
+              "required": true
+            },
+            "metadata": {
+              "type": "object",
+              "description": "Optional metadata to attach to the response.",
+              "required": false
+            }
+          },
+          "isBlocking": false
+        },
+        {
+          "name": "request_input",
+          "description": "Pause and request input from the caller before continuing.",
+          "parameters": {
+            "question": {
+              "type": "string",
+              "description": "The question or prompt to show the caller.",
+              "required": true
+            },
+            "options": {
+              "type": "array",
+              "description": "Optional list of suggested answers.",
+              "required": false
+            }
+          },
+          "isBlocking": false
+        },
+        {
+          "name": "await_signal",
+          "description": "Pause and wait for an external signal before continuing.",
+          "parameters": {},
+          "isBlocking": false
+        }
+      ]
+    }
+  },
+  "tools": {
+    "await_review": {
+      "description": "Review anything here while you work.",
+      "parameters": {
+        "referenceId": {
+          "type": "string",
+          "description": "Tracks the conversation across multiple calls.",
+          "required": true
+        }
+      },
+      "fixedParameters": {},
+      "agent": {
+        "provider": "github-copilot",
+        "model": "claude-sonnet-4.6",
+        "tools": [],
+        "promptFile": "code-reviewer.md"
+      },
+      "session": {
+        "mode": "PerReference",
+        "referenceIdParameter": "referenceId",
+        "poolTimeoutMinutes": 30,
+        "responseTimeoutMinutes": 10,
+        "responseTimeoutSeconds": 600
+      },
+      "signaling": {
+        "keepaliveIntervalSeconds": 15,
+        "tools": [
+          {
+            "name": "respond",
+            "description": "Send a final response back to the caller and end the agent turn.",
+            "parameters": {
+              "message": {
+                "type": "string",
+                "description": "The response message to send.",
+                "required": true
+              },
+              "metadata": {
+                "type": "object",
+                "description": "Optional metadata to attach to the response.",
+                "required": false
+              }
+            },
+            "isBlocking": false
+          },
+          {
+            "name": "request_input",
+            "description": "Pause and request input from the caller before continuing.",
+            "parameters": {
+              "question": {
+                "type": "string",
+                "description": "The question or prompt to show the caller.",
+                "required": true
+              },
+              "options": {
+                "type": "array",
+                "description": "Optional list of suggested answers.",
+                "required": false
+              }
+            },
+            "isBlocking": false
+          },
+          {
+            "name": "await_signal",
+            "description": "Pause and wait for an external signal before continuing.",
+            "parameters": {},
+            "isBlocking": false
+          },
+          {
+            "name": "test_",
+            "description": "Anywhere",
+            "parameters": {},
+            "isBlocking": false
+          }
+        ]
+      }
+    }
+  },
+  "agentToolSources": {}
+}

@@ -1,0 +1,102 @@
+@implements IAsyncDisposable
+
+<div class="session-card">
+    <div class="session-header">
+        <div class="session-state">
+            <div class="state-indicator" title="@GetStateLabel(Session.State)">
+                <span class="state-dot @GetStateClass(Session.State)"></span>
+            </div>
+            <div class="session-identity">
+                <div class="tool-name">@Session.ToolName</div>
+                @if (!string.IsNullOrEmpty(Session.ReferenceId))
+                {
+                    <div class="reference-id">@Session.ReferenceId</div>
+                }
+            </div>
+        </div>
+        <div class="session-meta">
+            <span class="session-state-text">@GetStateLabel(Session.State)</span>
+            <span class="session-id" title="@Session.SessionId">@Session.SessionId[..8]</span>
+        </div>
+    </div>
+
+    <div class="session-details">
+        <div class="detail-row">
+            <span class="detail-label">Duration:</span>
+            <span class="detail-value">@FormatDuration(Session.DurationMs)</span>
+        </div>
+        @if (!string.IsNullOrEmpty(Session.Model))
+        {
+            <div class="detail-row">
+                <span class="detail-label">Model:</span>
+                <span class="detail-value">@Session.Model</span>
+            </div>
+        }
+        <div class="detail-row">
+            <span class="detail-label">Tool Calls:</span>
+            <span class="detail-value">@Session.ToolCallCount</span>
+        </div>
+        @if (Session.State == SessionState.WaitingInput && !string.IsNullOrEmpty(Session.CurrentQuestion))
+        {
+            <div class="detail-row">
+                <span class="detail-label">Waiting for:</span>
+                <span class="detail-value">@Session.CurrentQuestion</span>
+            </div>
+        }
+    </div>
+
+    <div class="session-footer">
+        <span class="last-activity">Last activity: @FormatTime(Session.LastActivityAt)</span>
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public required SessionInfo Session { get; set; }
+
+    private string GetStateClass(SessionState state) => state switch
+    {
+        SessionState.Active => "state-active",
+        SessionState.Responding => "state-responding",
+        SessionState.Pooled => "state-pooled",
+        SessionState.WaitingInput => "state-waiting",
+        SessionState.Crashed => "state-crashed",
+        _ => "state-spawning"
+    };
+
+    private string GetStateLabel(SessionState state) => state switch
+    {
+        SessionState.Spawning => "Spawning",
+        SessionState.Active => "Active",
+        SessionState.Responding => "Responding",
+        SessionState.Pooled => "Pooled",
+        SessionState.WaitingInput => "Waiting for Input",
+        SessionState.Crashed => "Crashed",
+        _ => "Unknown"
+    };
+
+    private static string FormatDuration(long ms)
+    {
+        if (ms < 1000)
+            return $"{ms}ms";
+        if (ms < 60000)
+            return $"{ms / 1000:F1}s";
+        return $"{ms / 60000:F1}m";
+    }
+
+    private static string FormatTime(DateTimeOffset time)
+    {
+        var elapsed = DateTimeOffset.UtcNow - time;
+        if (elapsed.TotalSeconds < 60)
+            return "just now";
+        if (elapsed.TotalMinutes < 60)
+            return $"{(int)elapsed.TotalMinutes}m ago";
+        return $"{(int)elapsed.TotalHours}h ago";
+    }
+
+    async ValueTask IAsyncDisposable.DisposeAsync()
+    {
+        // Cleanup if needed
+        await Task.CompletedTask;
+    }
+}

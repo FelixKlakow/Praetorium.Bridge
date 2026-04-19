@@ -1,0 +1,701 @@
+@implements IAsyncDisposable
+@using Praetorium.Bridge.Agents
+@using Praetorium.Bridge.Configuration
+@using Praetorium.Bridge.Web.Services
+@inject ConfigurationService ConfigService
+@inject IAgentProvider AgentProvider
+
+<div class="tool-editor">
+    <div class="editor-header">
+        <div>
+            <h2>@ToolName</h2>
+            <p class="tool-description">@(Tool?.Description ?? "No description")</p>
+        </div>
+        <div class="header-actions">
+            <button class="delete-button" @onclick="ConfirmDelete" title="Delete tool">🗑️ Delete</button>
+            <button class="save-button" @onclick="SaveAsync">Save</button>
+        </div>
+    </div>
+
+    @if (showDeleteConfirm)
+    {
+        <div class="delete-confirm">
+            <span>Are you sure you want to delete this tool?</span>
+            <div class="confirm-actions">
+                <button class="cancel-button" @onclick="CancelDelete">Cancel</button>
+                <button class="delete-button" @onclick="DeleteAsync">Delete</button>
+            </div>
+        </div>
+    }
+
+    @if (!string.IsNullOrEmpty(SaveStatus))
+    {
+        <div class="status-message @(SaveStatus.StartsWith("Error") ? "error" : "success")">
+            @SaveStatus
+        </div>
+    }
+
+    <div class="editor-tabs">
+        <div class="tab-group">
+            <button class="tab @(activeTab == "parameters" ? "active" : "")" @onclick='() => SetActiveTabAsync("parameters")'>
+                Parameters
+            </button>
+            <button class="tab @(activeTab == "agent" ? "active" : "")" @onclick='() => SetActiveTabAsync("agent")'>
+                Agent Config
+            </button>
+            <button class="tab @(activeTab == "session" ? "active" : "")" @onclick='() => SetActiveTabAsync("session")'>
+                Session Config
+            </button>
+            <button class="tab @(activeTab == "signaling" ? "active" : "")" @onclick='() => SetActiveTabAsync("signaling")'>
+                Signaling
+            </button>
+            <button class="tab @(activeTab == "prompts" ? "active" : "")" @onclick='() => SetActiveTabAsync("prompts")'>
+                Prompts
+            </button>
+        </div>
+    </div>
+
+    <div class="tab-content">
+        @* ==================== PARAMETERS TAB ==================== *@
+        @if (activeTab == "parameters")
+        {
+            <div class="section">
+                <div class="section-header">
+                    <h3>Tool Parameters</h3>
+                    <button class="add-button" @onclick="ShowAddParameter" title="Add parameter">+ Add Parameter</button>
+                </div>
+
+                @if (showAddParameterForm)
+                {
+                    <div class="add-form">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Name:</label>
+                                <input type="text" @bind="newParamName" class="form-input" placeholder="e.g., userId" />
+                            </div>
+                            <div class="form-group">
+                                <label>Type:</label>
+                                <select @bind="newParamType" class="form-input">
+                                    <option value="string">string</option>
+                                    <option value="number">number</option>
+                                    <option value="integer">integer</option>
+                                    <option value="boolean">boolean</option>
+                                    <option value="object">object</option>
+                                    <option value="array">array</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" @bind="newParamRequired" />
+                                    Required
+                                </label>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Description:</label>
+                            <input type="text" @bind="newParamDescription" class="form-input" placeholder="Describe what this parameter does..." />
+                        </div>
+                        @if (!string.IsNullOrEmpty(paramError))
+                        {
+                            <div class="status-message error">@paramError</div>
+                        }
+                        <div class="form-actions">
+                            <button class="cancel-button" @onclick="CancelAddParameter">Cancel</button>
+                            <button class="save-button" @onclick="AddParameter">Add</button>
+                        </div>
+                    </div>
+                }
+
+                @if (Tool?.Parameters != null && Tool.Parameters.Count > 0)
+                {
+                    <div class="params-list">
+                        @foreach (var param in Tool.Parameters)
+                        {
+                            var isManaged = IsReferenceIdParameter(param.Key);
+                            <div class="param-item @(isManaged ? "param-item--managed" : "")">
+                                <div class="param-header">
+                                    <div class="param-name">@param.Key</div>
+                                    <div class="param-badges">
+                                        <span class="param-type">@param.Value.Type</span>
+                                        @if (param.Value.Required)
+                                        {
+                                            <span class="param-required">required</span>
+                                        }
+                                        @if (isManaged)
+                                        {
+                                            <span class="param-managed" title="Auto-managed: used for session routing and filtered before the agent receives the call">managed</span>
+                                        }
+                                    </div>
+                                    @if (!isManaged)
+                                    {
+                                        <button class="remove-button" @onclick="() => RemoveParameter(param.Key)" title="Remove parameter">×</button>
+                                    }
+                                </div>
+                                @if (isManaged)
+                                {
+                                    <div class="managed-description-row">
+                                        <input type="text" @bind="param.Value.Description" class="form-input param-description-input"
+                                               placeholder="Describe what this parameter does…" />
+                                    </div>
+                                }
+                                else if (!string.IsNullOrEmpty(param.Value.Description))
+                                {
+                                    <div class="param-description">@param.Value.Description</div>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <p class="empty-state">No parameters defined. Click "Add Parameter" to define input parameters for this tool.</p>
+                }
+            </div>
+        }
+
+        @* ==================== AGENT CONFIG TAB ==================== *@
+        @if (activeTab == "agent")
+        {
+            <div class="section">
+                <h3>Agent Configuration</h3>
+
+                <div class="form-group">
+                    <label>Provider:</label>
+                    <select @bind="Tool!.Agent!.Provider" class="form-input" disabled>
+                        <option value="github-copilot">GitHub Copilot</option>
+                    </select>
+                    <p class="field-hint">Currently only GitHub Copilot (via Azure AI Foundry) is integrated.</p>
+                </div>
+
+                <div class="form-group">
+                    <label>Model:</label>
+                    @if (isLoadingModels)
+                    {
+                        <div class="models-loading">Loading available deployments...</div>
+                    }
+                    else if (availableModels.Count > 0)
+                    {
+                        <select value="@(Tool.Agent.Model ?? string.Empty)"
+                                @onchange="OnModelChangedAsync" class="form-input">
+                            <option value="">-- Select a deployment --</option>
+                            @foreach (var m in availableModels)
+                            {
+                                <option value="@m">@m</option>
+                            }
+                        </select>
+                    }
+                    else
+                    {
+                        <input type="text" value="@(Tool.Agent.Model ?? string.Empty)"
+                               @onchange="OnModelChangedAsync" class="form-input" placeholder="e.g., gpt-4o" />
+                        <p class="field-hint field-hint-warn">⚠ Could not retrieve deployments from Azure AI Foundry. Enter the deployment name manually.</p>
+                    }
+                    <p class="field-hint">The model deployment to use from your Azure AI Foundry project.</p>
+                </div>
+
+                <div class="form-group">
+                    <label>Reasoning Effort:</label>
+                    <p class="field-hint">Controls how deeply the model reasons. The available levels come from the selected model's capabilities.</p>
+                    @if (isLoadingCapabilities)
+                    {
+                        <div class="models-loading">Checking model capabilities...</div>
+                    }
+                    else if (string.IsNullOrEmpty(Tool.Agent.Model))
+                    {
+                        <select class="form-input" disabled>
+                            <option>Select a model first</option>
+                        </select>
+                    }
+                    else if (selectedCapabilities?.SupportsReasoningEffort != true || selectedCapabilities.SupportedReasoningLevels.Count == 0)
+                    {
+                        <select class="form-input" disabled>
+                            <option>Not supported by @Tool.Agent.Model</option>
+                        </select>
+                    }
+                    else
+                    {
+                        <select @bind="Tool.Agent.ReasoningEffort" class="form-input">
+                            <option value="">None (default)</option>
+                            @foreach (var level in selectedCapabilities.SupportedReasoningLevels)
+                            {
+                                <option value="@level">@level</option>
+                            }
+                        </select>
+                    }
+                </div>
+
+                <div class="form-group">
+                    <div class="section-header">
+                        <label>Allowed Tool Sources:</label>
+                        <button class="add-button small" @onclick="ShowAddToolSource" title="Add tool source">+ Add</button>
+                    </div>
+                    <p class="field-hint">Agent tool sources that this tool's agent can use. These are defined in the agentToolSources configuration.</p>
+
+                    @if (showAddToolSourceForm)
+                    {
+                        <div class="add-form inline">
+                            <select @bind="selectedToolSourceToAdd" class="form-input">
+                                <option value="">-- Select tool source --</option>
+                                @foreach (var source in AvailableToolSources.Where(s => !Tool.Agent.Tools.Contains(s)))
+                                {
+                                    <option value="@source">@source</option>
+                                }
+                            </select>
+                            <button class="save-button small" @onclick="AddToolSource">Add</button>
+                            <button class="cancel-button small" @onclick="() => showAddToolSourceForm = false">Cancel</button>
+                        </div>
+                    }
+
+                    @if (Tool.Agent.Tools != null && Tool.Agent.Tools.Count > 0)
+                    {
+                        <div class="tags-list">
+                            @foreach (var toolRef in Tool.Agent.Tools)
+                            {
+                                <div class="tag">
+                                    <span>@toolRef</span>
+                                    <button class="tag-remove" @onclick="() => RemoveToolSource(toolRef)">×</button>
+                                </div>
+                            }
+                        </div>
+                    }
+                    else
+                    {
+                        <p class="empty-state small">No tool sources assigned.</p>
+                    }
+                </div>
+            </div>
+        }
+
+        @* ==================== SESSION CONFIG TAB ==================== *@
+        @if (activeTab == "session")
+        {
+            <div class="section">
+                <h3>Session Configuration</h3>
+                <p class="section-description">Configure how agent sessions are created and managed for this tool.</p>
+
+                <div class="form-group">
+                    <label>Session Mode:</label>
+                    <select @bind="Tool!.Session!.Mode" @bind:after="OnSessionModeChanged" class="form-input">
+                        <option value="@SessionMode.PerConnection">Per Connection</option>
+                        <option value="@SessionMode.PerReference">Per Reference</option>
+                        <option value="@SessionMode.Global">Global</option>
+                    </select>
+                    <div class="mode-explanation">
+                        @switch (Tool.Session.Mode)
+                        {
+                            case SessionMode.PerConnection:
+                                <p><strong>Per Connection:</strong> Creates a new session for each client connection. Sessions are isolated and do not share context. Best for independent, stateless operations.</p>
+                                break;
+                            case SessionMode.PerReference:
+                                <p><strong>Per Reference:</strong> Sessions are pooled and reused based on a reference ID parameter. Multiple requests with the same reference share the same session. Best for maintaining context across related requests (e.g., same user, same project).</p>
+                                break;
+                            case SessionMode.Global:
+                                <p><strong>Global:</strong> A single shared session is used for all connections. All requests share the same agent context. Best for shared knowledge bases or when coordination is needed.</p>
+                                break;
+                        }
+                    </div>
+                </div>
+
+                @if (Tool.Session.Mode == SessionMode.PerReference)
+                {
+                    <div class="form-group">
+                        <label>Reference ID Parameter:</label>
+                        <input type="text"
+                               value="@Tool.Session.ReferenceIdParameter"
+                               @onchange="OnReferenceIdParameterNameChanged"
+                               class="form-input" placeholder="e.g., userId, projectId" />
+                        <p class="field-hint">The name of the tool parameter that contains the reference ID for session pooling. This parameter is automatically added to the Parameters tab and is <strong>filtered before the agent receives the call</strong> — it is used only for session routing.</p>
+                    </div>
+                }
+
+                <div class="form-group">
+                    <label>Pool Timeout (minutes):</label>
+                    <input type="number" @bind="Tool.Session.PoolTimeoutMinutes" class="form-input" min="1" max="1440" />
+                    <p class="field-hint">How long an idle pooled session remains available before being disposed. Sessions are kept warm for reuse within this window.</p>
+                </div>
+
+                <div class="form-group">
+                    <label>Response Timeout (seconds):</label>
+                    <input type="number" @bind="Tool.Session.ResponseTimeoutSeconds" class="form-input" min="10" max="3600" />
+                    <p class="field-hint">Maximum time to wait for an agent response before timing out. Increase for long-running operations.</p>
+                </div>
+            </div>
+        }
+
+        @* ==================== SIGNALING TAB ==================== *@
+        @if (activeTab == "signaling")
+        {
+            <SignalingToolsEditor Signaling="Tool!.Signaling!" AvailablePromptFiles="availablePromptFiles" />
+        }
+
+        @* ==================== PROMPTS TAB ==================== *@
+        @if (activeTab == "prompts")
+        {
+            <div class="section">
+                <h3>Prompt Configuration</h3>
+                <p class="section-description">Configure the system prompt that guides agent behavior for this tool.</p>
+
+                <div class="form-group">
+                    <label>Prompt File:</label>
+                    @if (availablePromptFiles.Count == 0)
+                    {
+                        <p class="field-hint field-hint-warn">No prompt files found. Create one in the Prompts page first.</p>
+                    }
+                    else
+                    {
+                        <div class="input-with-actions">
+                            <select value="@(Tool!.Agent!.PromptFile ?? string.Empty)"
+                                    @onchange="(e) => Tool.Agent.PromptFile = e.Value?.ToString()"
+                                    class="form-input">
+                                <option value="">-- Select a prompt file --</option>
+                                @foreach (var file in availablePromptFiles)
+                                {
+                                    <option value="@file">@file</option>
+                                }
+                            </select>
+                            @if (!string.IsNullOrEmpty(Tool.Agent.PromptFile))
+                            {
+                                <a href="@GeneratePromptLink(Tool.Agent.PromptFile)" class="action-link" target="_blank" title="Edit prompt file">📝 Edit</a>
+                            }
+                        </div>
+                    }
+                    <p class="field-hint">Markdown file containing the system prompt. Files live in the prompts directory.</p>
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public required ToolDefinition Tool { get; set; }
+
+    [Parameter]
+    public required string ToolName { get; set; }
+
+    [Parameter]
+    public required Func<Task> OnSave { get; set; }
+
+    [Parameter]
+    public Func<Task>? OnDelete { get; set; }
+
+    [Parameter]
+    public List<string> AvailableToolSources { get; set; } = new();
+
+    private string activeTab = "parameters";
+    private string SaveStatus = "";
+    private bool showDeleteConfirm = false;
+
+    // Model loading
+    private List<string> availableModels = new();
+    private bool isLoadingModels = false;
+    private bool modelsLoaded = false;
+
+    // Model capabilities (drives the reasoning-effort dropdown)
+    private AgentCapabilities? selectedCapabilities;
+    private bool isLoadingCapabilities = false;
+    private string? loadedCapabilitiesFor;
+
+    // Prompt files (drives the prompt-file dropdown)
+    private List<string> availablePromptFiles = new();
+
+    // Parameter form
+    private bool showAddParameterForm = false;
+    private string newParamName = "";
+    private string newParamType = "string";
+    private string newParamDescription = "";
+    private bool newParamRequired = false;
+    private string paramError = "";
+
+    // Agent config
+    private bool showAddToolSourceForm = false;
+    private string selectedToolSourceToAdd = "";
+
+    protected override void OnParametersSet()
+    {
+        EnsureToolInitialized();
+        availablePromptFiles = ConfigService.ListPromptFiles().ToList();
+        // If the tool is already in PerReference mode, make sure the managed parameter exists
+        EnsureReferenceIdParameter();
+    }
+
+    private async Task SetActiveTabAsync(string tab)
+    {
+        activeTab = tab;
+        if (tab == "prompts")
+        {
+            availablePromptFiles = ConfigService.ListPromptFiles().ToList();
+        }
+        if (tab == "agent")
+        {
+            if (!modelsLoaded)
+            {
+                modelsLoaded = true;
+                isLoadingModels = true;
+                StateHasChanged();
+                try
+                {
+                    var models = await AgentProvider.GetAvailableModelsAsync(CancellationToken.None);
+                    availableModels = models.ToList();
+                }
+                catch
+                {
+                    availableModels = new List<string>();
+                }
+                finally
+                {
+                    isLoadingModels = false;
+                }
+            }
+            await LoadCapabilitiesAsync(Tool.Agent?.Model);
+        }
+    }
+
+    private async Task OnModelChangedAsync(ChangeEventArgs e)
+    {
+        var model = e.Value?.ToString() ?? string.Empty;
+        Tool.Agent!.Model = model;
+        await LoadCapabilitiesAsync(model);
+    }
+
+    private async Task LoadCapabilitiesAsync(string? model)
+    {
+        if (string.IsNullOrWhiteSpace(model))
+        {
+            selectedCapabilities = null;
+            loadedCapabilitiesFor = null;
+            return;
+        }
+
+        if (loadedCapabilitiesFor == model)
+            return;
+
+        isLoadingCapabilities = true;
+        StateHasChanged();
+        try
+        {
+            selectedCapabilities = await AgentProvider.GetModelCapabilitiesAsync(model, CancellationToken.None);
+            loadedCapabilitiesFor = model;
+            if (selectedCapabilities != null
+                && !string.IsNullOrEmpty(Tool.Agent?.ReasoningEffort)
+                && (!selectedCapabilities.SupportsReasoningEffort
+                    || !selectedCapabilities.SupportedReasoningLevels.Contains(Tool.Agent.ReasoningEffort!, StringComparer.OrdinalIgnoreCase)))
+            {
+                Tool.Agent.ReasoningEffort = string.Empty;
+            }
+        }
+        catch
+        {
+            selectedCapabilities = null;
+        }
+        finally
+        {
+            isLoadingCapabilities = false;
+        }
+    }
+
+    private void EnsureToolInitialized()
+    {
+        if (Tool == null) return;
+
+        Tool.Parameters ??= new Dictionary<string, ParameterDefinition>();
+        Tool.Agent ??= new AgentConfiguration();
+        Tool.Agent.Provider ??= "github-copilot"; // Default to the only integrated provider
+        Tool.Agent.Tools ??= new List<string>();
+        Tool.Session ??= new SessionConfiguration();
+        Tool.Signaling ??= new SignalingConfiguration();
+        Tool.Signaling.Tools ??= new List<SignalingToolEntry>();
+    }
+
+    // ==================== REFERENCE ID PARAMETER MANAGEMENT ====================
+
+    private bool IsReferenceIdParameter(string paramName)
+    {
+        return Tool?.Session?.Mode == SessionMode.PerReference
+            && !string.IsNullOrEmpty(Tool.Session.ReferenceIdParameter)
+            && Tool.Session.ReferenceIdParameter == paramName;
+    }
+
+    private void OnSessionModeChanged()
+    {
+        EnsureReferenceIdParameter();
+    }
+
+    private void OnReferenceIdParameterNameChanged(ChangeEventArgs e)
+    {
+        if (Tool?.Session == null) return;
+
+        var oldName = Tool.Session.ReferenceIdParameter;
+        var newName = e.Value?.ToString()?.Trim() ?? string.Empty;
+
+        if (newName == oldName) return;
+
+        // Rename the managed parameter entry so it stays in sync
+        if (!string.IsNullOrEmpty(oldName) && Tool.Parameters.TryGetValue(oldName, out var existing))
+        {
+            Tool.Parameters.Remove(oldName);
+            if (!string.IsNullOrEmpty(newName))
+                Tool.Parameters[newName] = existing;
+        }
+
+        Tool.Session.ReferenceIdParameter = newName;
+        EnsureReferenceIdParameter();
+    }
+
+    private void EnsureReferenceIdParameter()
+    {
+        if (Tool?.Session?.Mode != SessionMode.PerReference) return;
+
+        if (string.IsNullOrWhiteSpace(Tool.Session.ReferenceIdParameter))
+            Tool.Session.ReferenceIdParameter = "referenceId";
+
+        var paramName = Tool.Session.ReferenceIdParameter;
+        if (!Tool.Parameters.ContainsKey(paramName))
+        {
+            Tool.Parameters[paramName] = new ParameterDefinition
+            {
+                Type = "string",
+                Required = true,
+                Description = "Tracks the conversation across multiple calls."
+            };
+        }
+    }
+
+    // ==================== PARAMETER METHODS ====================
+    private void ShowAddParameter()
+    {
+        showAddParameterForm = true;
+        newParamName = "";
+        newParamType = "string";
+        newParamDescription = "";
+        newParamRequired = false;
+        paramError = "";
+    }
+
+    private void CancelAddParameter()
+    {
+        showAddParameterForm = false;
+        paramError = "";
+    }
+
+    private void AddParameter()
+    {
+        paramError = "";
+
+        if (string.IsNullOrWhiteSpace(newParamName))
+        {
+            paramError = "Parameter name is required";
+            return;
+        }
+
+        if (!System.Text.RegularExpressions.Regex.IsMatch(newParamName, @"^[a-zA-Z][a-zA-Z0-9_]*$"))
+        {
+            paramError = "Parameter name must start with a letter and contain only letters, numbers, and underscores";
+            return;
+        }
+
+        if (Tool?.Parameters?.ContainsKey(newParamName) == true)
+        {
+            paramError = $"A parameter named '{newParamName}' already exists";
+            return;
+        }
+
+        if (IsReferenceIdParameter(newParamName))
+        {
+            paramError = $"'{newParamName}' is a managed parameter and cannot be added manually";
+            return;
+        }
+
+        Tool!.Parameters![newParamName] = new ParameterDefinition
+        {
+            Type = newParamType,
+            Description = newParamDescription,
+            Required = newParamRequired
+        };
+
+        showAddParameterForm = false;
+    }
+
+    private void RemoveParameter(string paramName)
+    {
+        if (IsReferenceIdParameter(paramName)) return;
+        Tool?.Parameters?.Remove(paramName);
+    }
+
+    // ==================== AGENT CONFIG METHODS ====================
+    private void ShowAddToolSource()
+    {
+        showAddToolSourceForm = true;
+        selectedToolSourceToAdd = "";
+    }
+
+    private void AddToolSource()
+    {
+        if (!string.IsNullOrEmpty(selectedToolSourceToAdd) && Tool?.Agent?.Tools != null)
+        {
+            if (!Tool.Agent.Tools.Contains(selectedToolSourceToAdd))
+            {
+                Tool.Agent.Tools.Add(selectedToolSourceToAdd);
+            }
+        }
+        showAddToolSourceForm = false;
+        selectedToolSourceToAdd = "";
+    }
+
+    private void RemoveToolSource(string toolSource)
+    {
+        Tool?.Agent?.Tools?.Remove(toolSource);
+    }
+
+    // ==================== PROMPT METHODS ====================
+    private static string GeneratePromptLink(string fileName)
+    {
+        var normalized = fileName.Replace('\\', '/').TrimStart('/');
+        if (normalized.StartsWith("./", StringComparison.Ordinal))
+            normalized = normalized.Substring(2);
+        if (normalized.StartsWith("prompts/", StringComparison.OrdinalIgnoreCase))
+            normalized = normalized.Substring("prompts/".Length);
+        return $"/prompts/{Uri.EscapeDataString(normalized)}";
+    }
+
+    // ==================== SAVE/DELETE METHODS ====================
+    private async Task SaveAsync()
+    {
+        try
+        {
+            await OnSave.Invoke();
+            SaveStatus = "Saved successfully";
+            await Task.Delay(2000);
+            SaveStatus = "";
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            SaveStatus = $"Error: {ex.Message}";
+        }
+    }
+
+    private void ConfirmDelete()
+    {
+        showDeleteConfirm = true;
+    }
+
+    private void CancelDelete()
+    {
+        showDeleteConfirm = false;
+    }
+
+    private async Task DeleteAsync()
+    {
+        if (OnDelete != null)
+        {
+            await OnDelete.Invoke();
+        }
+        showDeleteConfirm = false;
+    }
+
+    async ValueTask IAsyncDisposable.DisposeAsync()
+    {
+        await Task.CompletedTask;
+    }
+}

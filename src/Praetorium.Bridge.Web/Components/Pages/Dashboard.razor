@@ -1,0 +1,144 @@
+@page "/"
+@rendermode InteractiveServer
+@inject ISessionManager SessionManager
+@inject ConfigurationService ConfigService
+@inject DashboardBridgeHooks BridgeHooks
+@implements IAsyncDisposable
+
+<PageTitle>Dashboard - Praetorium.Bridge</PageTitle>
+
+<div class="dashboard-container">
+    <div class="dashboard-header">
+        <h1>Dashboard</h1>
+        <p class="subtitle">Live session monitoring and bridge activity</p>
+    </div>
+
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-value">@activeSessions.Count</div>
+            <div class="stat-label">Active Sessions</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">@pooledSessions.Count</div>
+            <div class="stat-label">Pooled Sessions</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">@toolCount</div>
+            <div class="stat-label">Tools Configured</div>
+        </div>
+    </div>
+
+    <div class="main-content">
+        <div class="sessions-section">
+            <h2>Active Sessions</h2>
+            @if (activeSessions.Count == 0)
+            {
+                <p class="empty-state">No active sessions</p>
+            }
+            else
+            {
+                <div class="sessions-list">
+                    @foreach (var session in activeSessions)
+                    {
+                        <SessionCard Session="session" />
+                    }
+                </div>
+            }
+
+            @if (pooledSessions.Count > 0)
+            {
+                <div class="pooled-section">
+                    <button class="toggle-pooled" @onclick="TogglePooled">
+                        @(showPooled ? "Hide" : "Show") Pooled Sessions (@pooledSessions.Count)
+                    </button>
+                    @if (showPooled)
+                    {
+                        <div class="pooled-list">
+                            @foreach (var session in pooledSessions)
+                            {
+                                <SessionCard Session="session" />
+                            }
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+
+        <div class="activity-section">
+            <ActivityLog Entries="activityLog" />
+        </div>
+    </div>
+</div>
+
+@code {
+    private List<SessionInfo> activeSessions = new();
+    private List<SessionInfo> pooledSessions = new();
+    private List<ActivityLogEntry> activityLog = new();
+    private bool showPooled = false;
+    private int toolCount = 0;
+    private bool subscribed;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadSessionsAsync();
+
+        activityLog = BridgeHooks.GetRecentActivity(100)
+            .OrderByDescending(e => e.Timestamp)
+            .ToList();
+
+        BridgeHooks.ActivityLogged += OnActivityLoggedAsync;
+        BridgeHooks.ConfigReloaded += OnConfigReloadedAsync;
+        subscribed = true;
+    }
+
+    private async Task LoadSessionsAsync()
+    {
+        try
+        {
+            var allSessions = await SessionManager.GetAllSessionsAsync(CancellationToken.None);
+            activeSessions = allSessions.Where(s => s.State != SessionState.Pooled && s.State != SessionState.Crashed).ToList();
+            pooledSessions = allSessions.Where(s => s.State == SessionState.Pooled).ToList();
+
+            toolCount = ConfigService.GetConfiguration()?.Tools?.Count ?? 0;
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Error loading sessions: {ex}");
+        }
+    }
+
+    private async Task OnActivityLoggedAsync(ActivityLogEntry entry)
+    {
+        activityLog.Insert(0, entry);
+        if (activityLog.Count > 100)
+        {
+            activityLog = activityLog.Take(100).ToList();
+        }
+
+        await LoadSessionsAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task OnConfigReloadedAsync()
+    {
+        await LoadSessionsAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void TogglePooled()
+    {
+        showPooled = !showPooled;
+    }
+
+    async ValueTask IAsyncDisposable.DisposeAsync()
+    {
+        if (subscribed)
+        {
+            BridgeHooks.ActivityLogged -= OnActivityLoggedAsync;
+            BridgeHooks.ConfigReloaded -= OnConfigReloadedAsync;
+            subscribed = false;
+        }
+
+        await Task.CompletedTask;
+    }
+}

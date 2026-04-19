@@ -1,0 +1,245 @@
+@using Praetorium.Bridge.Agents
+@using Praetorium.Bridge.Configuration
+@using Praetorium.Bridge.Web.Services
+@inject ConfigurationService ConfigService
+@inject IAgentProvider AgentProvider
+
+<div class="editor-content">
+    <div class="editor-header">
+        <div>
+            <h2>Default Settings</h2>
+            <p class="tool-description">Defaults applied to tools that do not override these values.</p>
+        </div>
+        <div class="header-actions">
+            <button class="save-button" @onclick="SaveAsync" disabled="@isSaving">
+                @(isSaving ? "Saving..." : "Save")
+            </button>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(saveStatus))
+    {
+        <div class="status-message @(saveStatus.StartsWith("Error") ? "error" : "success")">@saveStatus</div>
+    }
+
+    <div class="section">
+        <h3>Agent Defaults</h3>
+
+        <div class="form-group">
+            <label>Default Model:</label>
+            @if (isLoadingModels)
+            {
+                <div class="models-loading">Loading available deployments...</div>
+            }
+            else if (availableModels.Count > 0)
+            {
+                <select value="@(Defaults.Agent.Model ?? string.Empty)"
+                        @onchange="OnModelChangedAsync" class="form-input">
+                    <option value="">-- Select a deployment --</option>
+                    @foreach (var m in availableModels)
+                    {
+                        <option value="@m">@m</option>
+                    }
+                </select>
+            }
+            else
+            {
+                <input type="text" value="@(Defaults.Agent.Model ?? string.Empty)"
+                       @onchange="OnModelChangedAsync" class="form-input" placeholder="e.g., gpt-4o" />
+                <p class="field-hint field-hint-warn">⚠ Could not retrieve deployments. Enter the deployment name manually.</p>
+            }
+        </div>
+
+        <div class="form-group">
+            <label>Default Reasoning Effort:</label>
+            @if (isLoadingCapabilities)
+            {
+                <div class="models-loading">Checking model capabilities...</div>
+            }
+            else if (string.IsNullOrEmpty(Defaults.Agent.Model))
+            {
+                <select class="form-input" disabled>
+                    <option>Select a default model first</option>
+                </select>
+            }
+            else if (selectedCapabilities?.SupportsReasoningEffort != true || selectedCapabilities.SupportedReasoningLevels.Count == 0)
+            {
+                <select class="form-input" disabled>
+                    <option>Not supported by @Defaults.Agent.Model</option>
+                </select>
+            }
+            else
+            {
+                <select @bind="Defaults.Agent.ReasoningEffort" class="form-input">
+                    <option value="">None</option>
+                    @foreach (var level in selectedCapabilities.SupportedReasoningLevels)
+                    {
+                        <option value="@level">@level</option>
+                    }
+                </select>
+            }
+        </div>
+
+        <div class="form-group">
+            <label>Default Prompt File:</label>
+            @if (availablePromptFiles.Count == 0)
+            {
+                <p class="field-hint field-hint-warn">No prompt files found. Create one in the Prompts page first.</p>
+            }
+            else
+            {
+                <select value="@(Defaults.Agent.PromptFile ?? string.Empty)"
+                        @onchange="(e) => Defaults.Agent.PromptFile = e.Value?.ToString()"
+                        class="form-input">
+                    <option value="">-- Select a prompt file --</option>
+                    @foreach (var file in availablePromptFiles)
+                    {
+                        <option value="@file">@file</option>
+                    }
+                </select>
+            }
+        </div>
+    </div>
+
+    <div class="section">
+        <h3>Session Defaults</h3>
+
+        <div class="form-group">
+            <label>Session Mode:</label>
+            <select @bind="Defaults.Session.Mode" class="form-input">
+                <option value="@SessionMode.PerConnection">Per Connection</option>
+                <option value="@SessionMode.PerReference">Per Reference</option>
+                <option value="@SessionMode.Global">Global</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label>Pool Timeout (minutes):</label>
+            <input type="number" @bind="Defaults.Session.PoolTimeoutMinutes" class="form-input" min="1" max="1440" />
+        </div>
+
+        <div class="form-group">
+            <label>Response Timeout (seconds):</label>
+            <input type="number" @bind="Defaults.Session.ResponseTimeoutSeconds" class="form-input" min="10" max="3600" />
+        </div>
+    </div>
+
+    <SignalingToolsEditor Signaling="Defaults.Signaling" AvailablePromptFiles="availablePromptFiles" />
+</div>
+
+@code {
+    [Parameter]
+    public required DefaultsConfiguration Defaults { get; set; }
+
+    [Parameter]
+    public required Func<DefaultsConfiguration, Task> OnSave { get; set; }
+
+    private bool isSaving;
+    private string saveStatus = string.Empty;
+
+    private List<string> availableModels = new();
+    private bool isLoadingModels;
+
+    private AgentCapabilities? selectedCapabilities;
+    private bool isLoadingCapabilities;
+    private string? loadedCapabilitiesFor;
+
+    private List<string> availablePromptFiles = new();
+
+    protected override void OnParametersSet()
+    {
+        Defaults.Agent ??= new AgentConfiguration();
+        Defaults.Session ??= new SessionConfiguration();
+        Defaults.Signaling ??= new SignalingConfiguration();
+        Defaults.Signaling.Tools ??= new List<SignalingToolEntry>();
+        availablePromptFiles = ConfigService.ListPromptFiles().ToList();
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        isLoadingModels = true;
+        try
+        {
+            var models = await AgentProvider.GetAvailableModelsAsync(CancellationToken.None);
+            availableModels = models.ToList();
+        }
+        catch
+        {
+            availableModels = new List<string>();
+        }
+        finally
+        {
+            isLoadingModels = false;
+        }
+
+        await LoadCapabilitiesAsync(Defaults.Agent.Model);
+    }
+
+    private async Task OnModelChangedAsync(ChangeEventArgs e)
+    {
+        var model = e.Value?.ToString() ?? string.Empty;
+        Defaults.Agent.Model = model;
+        await LoadCapabilitiesAsync(model);
+    }
+
+    private async Task LoadCapabilitiesAsync(string? model)
+    {
+        if (string.IsNullOrWhiteSpace(model))
+        {
+            selectedCapabilities = null;
+            loadedCapabilitiesFor = null;
+            return;
+        }
+
+        if (loadedCapabilitiesFor == model)
+            return;
+
+        isLoadingCapabilities = true;
+        StateHasChanged();
+        try
+        {
+            selectedCapabilities = await AgentProvider.GetModelCapabilitiesAsync(model, CancellationToken.None);
+            loadedCapabilitiesFor = model;
+            if (selectedCapabilities != null
+                && !string.IsNullOrEmpty(Defaults.Agent.ReasoningEffort)
+                && (!selectedCapabilities.SupportsReasoningEffort
+                    || !selectedCapabilities.SupportedReasoningLevels.Contains(Defaults.Agent.ReasoningEffort!, StringComparer.OrdinalIgnoreCase)))
+            {
+                Defaults.Agent.ReasoningEffort = string.Empty;
+            }
+        }
+        catch
+        {
+            selectedCapabilities = null;
+        }
+        finally
+        {
+            isLoadingCapabilities = false;
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        if (isSaving)
+            return;
+
+        isSaving = true;
+        saveStatus = string.Empty;
+        try
+        {
+            await OnSave.Invoke(Defaults);
+            saveStatus = "Saved successfully";
+            await Task.Delay(2000);
+            saveStatus = string.Empty;
+        }
+        catch (Exception ex)
+        {
+            saveStatus = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            isSaving = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+}

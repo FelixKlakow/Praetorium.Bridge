@@ -1,0 +1,222 @@
+@using Praetorium.Bridge.Configuration
+
+<div class="editor-content">
+    <div class="editor-header">
+        <div>
+            <h2>Agent Source: @SourceName</h2>
+            <p class="tool-description">MCP tool source available to agents that opt in.</p>
+        </div>
+        <div class="header-actions">
+            <button class="delete-button" @onclick="ConfirmDelete">🗑️ Delete</button>
+            <button class="save-button" @onclick="SaveAsync" disabled="@isSaving">
+                @(isSaving ? "Saving..." : "Save")
+            </button>
+        </div>
+    </div>
+
+    @if (showDeleteConfirm)
+    {
+        <div class="delete-confirm">
+            <span>Remove agent source '@SourceName'?</span>
+            <div class="confirm-actions">
+                <button class="cancel-button" @onclick="() => showDeleteConfirm = false">Cancel</button>
+                <button class="delete-button" @onclick="DeleteAsync">Delete</button>
+            </div>
+        </div>
+    }
+
+    @if (!string.IsNullOrEmpty(saveStatus))
+    {
+        <div class="status-message @(saveStatus.StartsWith("Error") ? "error" : "success")">@saveStatus</div>
+    }
+
+    <div class="section">
+        <div class="form-group">
+            <label>Type:</label>
+            <select @bind="Source.Type" class="form-input">
+                <option value="stdio">stdio (command)</option>
+                <option value="http">http (URL)</option>
+            </select>
+        </div>
+
+        @if (string.Equals(Source.Type, "http", StringComparison.OrdinalIgnoreCase))
+        {
+            <div class="form-group">
+                <label>URL:</label>
+                <input type="text" @bind="Source.Url" class="form-input" placeholder="https://example.com/mcp" />
+            </div>
+
+            <div class="form-group">
+                <div class="section-header">
+                    <label>Headers:</label>
+                    <button class="add-button small" @onclick="ShowAddHeader" title="Add header">+ Add</button>
+                </div>
+
+                @if (showAddHeader)
+                {
+                    <div class="add-form inline">
+                        <input type="text" @bind="newHeaderName" class="form-input" placeholder="Header name" />
+                        <input type="text" @bind="newHeaderValue" class="form-input" placeholder="Header value" />
+                        <button class="save-button small" @onclick="AddHeader">Add</button>
+                        <button class="cancel-button small" @onclick="() => showAddHeader = false">Cancel</button>
+                    </div>
+                }
+
+                @if (Source.Headers != null && Source.Headers.Count > 0)
+                {
+                    <div class="params-list">
+                        @foreach (var header in Source.Headers.ToList())
+                        {
+                            <div class="param-item">
+                                <div class="param-header">
+                                    <div class="param-name">@header.Key</div>
+                                    <div class="param-description">@header.Value</div>
+                                    <button class="remove-button" @onclick="() => RemoveHeader(header.Key)">×</button>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <p class="empty-state small">No headers defined.</p>
+                }
+            </div>
+        }
+        else
+        {
+            <div class="form-group">
+                <label>Command:</label>
+                <input type="text" @bind="Source.Command" class="form-input" placeholder="e.g., npx" />
+            </div>
+
+            <div class="form-group">
+                <label>Arguments (one per line):</label>
+                <textarea class="form-textarea" rows="4" @bind="argsText" @bind:event="oninput"
+                          placeholder="-y&#10;@@anthropic/mcp-filesystem&#10;/workspace"></textarea>
+                <p class="field-hint">Each line becomes a separate command-line argument.</p>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public required string SourceName { get; set; }
+
+    [Parameter]
+    public required AgentToolSource Source { get; set; }
+
+    [Parameter]
+    public required Func<AgentToolSource, Task> OnSave { get; set; }
+
+    [Parameter]
+    public required Func<Task> OnDelete { get; set; }
+
+    private bool isSaving;
+    private bool showDeleteConfirm;
+    private string saveStatus = string.Empty;
+
+    private bool showAddHeader;
+    private string newHeaderName = string.Empty;
+    private string newHeaderValue = string.Empty;
+
+    private string argsText = string.Empty;
+    private AgentToolSource? lastBoundSource;
+
+    protected override void OnParametersSet()
+    {
+        Source.Type ??= "stdio";
+        Source.Headers ??= new Dictionary<string, string>();
+
+        if (!ReferenceEquals(lastBoundSource, Source))
+        {
+            argsText = Source.Args != null ? string.Join("\n", Source.Args) : string.Empty;
+            lastBoundSource = Source;
+        }
+    }
+
+    private void SyncArgs()
+    {
+        if (string.IsNullOrWhiteSpace(argsText))
+        {
+            Source.Args = Array.Empty<string>();
+            return;
+        }
+
+        Source.Args = argsText
+            .Replace("\r\n", "\n")
+            .Split('\n', StringSplitOptions.None)
+            .Select(line => line.TrimEnd())
+            .ToArray();
+    }
+
+    private void ShowAddHeader()
+    {
+        showAddHeader = true;
+        newHeaderName = string.Empty;
+        newHeaderValue = string.Empty;
+    }
+
+    private void AddHeader()
+    {
+        if (string.IsNullOrWhiteSpace(newHeaderName))
+            return;
+
+        Source.Headers ??= new Dictionary<string, string>();
+        Source.Headers[newHeaderName] = newHeaderValue ?? string.Empty;
+        showAddHeader = false;
+    }
+
+    private void RemoveHeader(string name)
+    {
+        Source.Headers?.Remove(name);
+    }
+
+    private void ConfirmDelete()
+    {
+        showDeleteConfirm = true;
+    }
+
+    private async Task DeleteAsync()
+    {
+        try
+        {
+            await OnDelete.Invoke();
+        }
+        catch (Exception ex)
+        {
+            saveStatus = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            showDeleteConfirm = false;
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        if (isSaving)
+            return;
+
+        isSaving = true;
+        saveStatus = string.Empty;
+        try
+        {
+            SyncArgs();
+            await OnSave.Invoke(Source);
+            saveStatus = "Saved successfully";
+            await Task.Delay(2000);
+            saveStatus = string.Empty;
+        }
+        catch (Exception ex)
+        {
+            saveStatus = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            isSaving = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+}

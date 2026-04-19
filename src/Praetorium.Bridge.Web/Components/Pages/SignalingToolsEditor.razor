@@ -1,0 +1,375 @@
+@using Praetorium.Bridge.Configuration
+@using Praetorium.Bridge.Signaling
+
+<div class="section">
+    <h3>Signaling Configuration</h3>
+    <p class="section-description">Signaling tools let the agent send output to the client, request input, or wait for external signals during execution.</p>
+
+    <div class="form-group">
+        <label>Keepalive Interval (seconds):</label>
+        <input type="number" @bind="Signaling.KeepaliveIntervalSeconds" class="form-input" min="5" max="300" />
+        <p class="field-hint">How often the agent sends keepalive signals during long operations.</p>
+    </div>
+
+    <div class="form-group">
+        <div class="section-header">
+            <label>Signaling Tools:</label>
+            <div class="add-signaling-actions">
+                <select @bind="selectedDefaultToAdd" class="form-input inline">
+                    <option value="">-- Add default signaling --</option>
+                    @foreach (var def in availableDefaults)
+                    {
+                        <option value="@def">@def</option>
+                    }
+                </select>
+                <button class="add-button small" @onclick="AddDefault" disabled="@(string.IsNullOrEmpty(selectedDefaultToAdd))">+ Add Default</button>
+                <button class="add-button small" @onclick="ShowAddCustom">+ Add Custom</button>
+            </div>
+        </div>
+
+        @if (showAddCustomForm)
+        {
+            <div class="add-form">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Signal Name:</label>
+                        <input type="text" @bind="newCustomName" class="form-input" placeholder="e.g., request_approval" />
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Description:</label>
+                    <input type="text" @bind="newCustomDescription" class="form-input" placeholder="Describe when the agent should use this signal..." />
+                </div>
+                @if (!string.IsNullOrEmpty(customError))
+                {
+                    <div class="status-message error">@customError</div>
+                }
+                <div class="form-actions">
+                    <button class="cancel-button" @onclick="CancelAddCustom">Cancel</button>
+                    <button class="save-button" @onclick="AddCustom">Add</button>
+                </div>
+            </div>
+        }
+
+        @if (Signaling.Tools.Count == 0)
+        {
+            <p class="empty-state small">No signaling tools configured.</p>
+        }
+        else
+        {
+            <div class="signaling-list">
+                @for (var i = 0; i < Signaling.Tools.Count; i++)
+                {
+                    var entry = Signaling.Tools[i];
+                    var index = i;
+                    var isBuiltIn = IsBuiltInName(entry.Name);
+                    var expanded = expandedIndex == index;
+                    <div class="signaling-entry">
+                        <div class="entry-header">
+                            <button class="expand-toggle" @onclick="() => ToggleExpand(index)" title="@(expanded ? "Collapse" : "Expand")">
+                                @(expanded ? "▾" : "▸")
+                            </button>
+                            <span class="signal-name">@entry.Name</span>
+                            @if (isBuiltIn)
+                            {
+                                <span class="signal-badge builtin">built-in</span>
+                            }
+                            else
+                            {
+                                <span class="signal-badge custom">custom</span>
+                            }
+                            @if (entry.IsBlocking)
+                            {
+                                <span class="signal-badge blocking">blocking</span>
+                            }
+                            <span class="signal-description">@entry.Description</span>
+                            <button class="remove-button" @onclick="() => RemoveEntry(index)" title="Remove signaling tool">×</button>
+                        </div>
+
+                        @if (expanded)
+                        {
+                            <div class="entry-body">
+                                <div class="form-group">
+                                    <label>Name:</label>
+                                    <input type="text" @bind="entry.Name" class="form-input" />
+                                </div>
+
+                                <div class="form-group">
+                                    <label>Description:</label>
+                                    <input type="text" @bind="entry.Description" class="form-input" />
+                                </div>
+
+                                <ParameterListEditor Parameters="entry.Parameters" Title="Request Parameters"
+                                                     EmptyText="No request parameters. The agent invokes this signal without arguments." />
+
+                                <div class="form-group">
+                                    <label class="checkbox-label">
+                                        <input type="checkbox" checked="@entry.IsBlocking"
+                                               @onchange="(e) => OnBlockingChanged(entry, (bool)(e.Value ?? false))" />
+                                        <span class="checkbox-text">
+                                            <strong>Blocking</strong> — agent waits for a response from the client before continuing
+                                        </span>
+                                    </label>
+                                </div>
+
+                                @if (entry.IsBlocking)
+                                {
+                                    <div class="form-group">
+                                        <label>Response Format:</label>
+                                        <select value="@(entry.ResponseFormat ?? "json")"
+                                                @onchange="(e) => OnResponseFormatChanged(entry, e.Value?.ToString())"
+                                                class="form-input">
+                                            <option value="json">JSON (structured response)</option>
+                                            <option value="markdown">Markdown (prompt template)</option>
+                                        </select>
+                                    </div>
+
+                                    @if (entry.ResponseFormat == "markdown")
+                                    {
+                                        <div class="form-group">
+                                            <label>Response Prompt File:</label>
+                                            @if (AvailablePromptFiles.Count == 0)
+                                            {
+                                                <p class="field-hint field-hint-warn">No prompt files found. Create one in the Prompts tab first.</p>
+                                            }
+                                            else
+                                            {
+                                                <select value="@(entry.ResponsePromptFile ?? string.Empty)"
+                                                        @onchange="(e) => entry.ResponsePromptFile = e.Value?.ToString()"
+                                                        class="form-input">
+                                                    <option value="">-- Select a prompt file --</option>
+                                                    @foreach (var file in AvailablePromptFiles)
+                                                    {
+                                                        <option value="@file">@file</option>
+                                                    }
+                                                </select>
+                                            }
+                                            <p class="field-hint">Contents of the selected markdown file are returned verbatim to the agent.</p>
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <ParameterListEditor Parameters="GetOrCreateResponseParameters(entry)"
+                                                             Title="Response Parameters"
+                                                             EmptyText="No response parameters. The response schema is an empty object." />
+                                    }
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public required SignalingConfiguration Signaling { get; set; }
+
+    [Parameter]
+    public IReadOnlyList<string> AvailablePromptFiles { get; set; } = Array.Empty<string>();
+
+    private readonly string[] availableDefaults = new[]
+    {
+        SignalingToolFactory.RespondToolName,
+        SignalingToolFactory.RequestInputToolName,
+        SignalingToolFactory.AwaitSignalToolName,
+    };
+
+    private int expandedIndex = -1;
+    private string selectedDefaultToAdd = string.Empty;
+    private bool showAddCustomForm;
+    private string newCustomName = string.Empty;
+    private string newCustomDescription = string.Empty;
+    private string customError = string.Empty;
+
+    protected override void OnParametersSet()
+    {
+        Signaling.Tools ??= new List<SignalingToolEntry>();
+    }
+
+    private static bool IsBuiltInName(string name) =>
+        name is SignalingToolFactory.RespondToolName
+             or SignalingToolFactory.RequestInputToolName
+             or SignalingToolFactory.AwaitSignalToolName;
+
+    private void ToggleExpand(int index)
+    {
+        expandedIndex = expandedIndex == index ? -1 : index;
+    }
+
+    private void AddDefault()
+    {
+        if (string.IsNullOrEmpty(selectedDefaultToAdd))
+            return;
+        if (Signaling.Tools.Any(t => t.Name == selectedDefaultToAdd))
+        {
+            selectedDefaultToAdd = string.Empty;
+            return;
+        }
+
+        Signaling.Tools.Add(CreateDefaultEntry(selectedDefaultToAdd));
+        expandedIndex = Signaling.Tools.Count - 1;
+        selectedDefaultToAdd = string.Empty;
+    }
+
+    private static SignalingToolEntry CreateDefaultEntry(string name) => name switch
+    {
+        SignalingToolFactory.RespondToolName => new SignalingToolEntry
+        {
+            Name = name,
+            Description = "Send a response message back to the client during execution.",
+            Parameters = new Dictionary<string, ParameterDefinition>
+            {
+                ["message"] = new ParameterDefinition
+                {
+                    Type = "string",
+                    Description = "The message to send back to the client.",
+                    Required = true,
+                },
+                ["metadata"] = new ParameterDefinition
+                {
+                    Type = "object",
+                    Description = "Optional structured metadata to include with the response.",
+                },
+            },
+            IsBlocking = false,
+        },
+        SignalingToolFactory.RequestInputToolName => new SignalingToolEntry
+        {
+            Name = name,
+            Description = "Ask the user a question and wait for their answer.",
+            Parameters = new Dictionary<string, ParameterDefinition>
+            {
+                ["question"] = new ParameterDefinition
+                {
+                    Type = "string",
+                    Description = "The question to ask the user.",
+                    Required = true,
+                },
+                ["options"] = new ParameterDefinition
+                {
+                    Type = "array",
+                    Description = "Optional list of choices to offer the user.",
+                    Items = new ParameterDefinition { Type = "string" },
+                },
+            },
+            IsBlocking = true,
+            ResponseFormat = SignalingToolFactory.JsonResponseFormat,
+            ResponseParameters = new Dictionary<string, ParameterDefinition>
+            {
+                ["answer"] = new ParameterDefinition
+                {
+                    Type = "string",
+                    Description = "The user's answer.",
+                    Required = true,
+                },
+            },
+        },
+        SignalingToolFactory.AwaitSignalToolName => new SignalingToolEntry
+        {
+            Name = name,
+            Description = "Wait for the next signal from the client without sending a message.",
+            Parameters = new Dictionary<string, ParameterDefinition>(),
+            IsBlocking = true,
+            ResponseFormat = SignalingToolFactory.JsonResponseFormat,
+            ResponseParameters = new Dictionary<string, ParameterDefinition>(),
+        },
+        _ => new SignalingToolEntry { Name = name },
+    };
+
+    private void ShowAddCustom()
+    {
+        showAddCustomForm = true;
+        newCustomName = string.Empty;
+        newCustomDescription = string.Empty;
+        customError = string.Empty;
+    }
+
+    private void CancelAddCustom()
+    {
+        showAddCustomForm = false;
+        customError = string.Empty;
+    }
+
+    private void AddCustom()
+    {
+        customError = string.Empty;
+
+        if (string.IsNullOrWhiteSpace(newCustomName))
+        {
+            customError = "Signal name is required.";
+            return;
+        }
+
+        if (!System.Text.RegularExpressions.Regex.IsMatch(newCustomName, @"^[a-zA-Z][a-zA-Z0-9_]*$"))
+        {
+            customError = "Signal name must start with a letter and contain only letters, digits, and underscores.";
+            return;
+        }
+
+        if (Signaling.Tools.Any(t => t.Name == newCustomName))
+        {
+            customError = $"A signaling tool named '{newCustomName}' already exists.";
+            return;
+        }
+
+        Signaling.Tools.Add(new SignalingToolEntry
+        {
+            Name = newCustomName,
+            Description = newCustomDescription,
+            Parameters = new Dictionary<string, ParameterDefinition>(),
+            IsBlocking = false,
+        });
+
+        expandedIndex = Signaling.Tools.Count - 1;
+        showAddCustomForm = false;
+    }
+
+    private void RemoveEntry(int index)
+    {
+        if (index < 0 || index >= Signaling.Tools.Count)
+            return;
+        Signaling.Tools.RemoveAt(index);
+        if (expandedIndex == index)
+            expandedIndex = -1;
+        else if (expandedIndex > index)
+            expandedIndex--;
+    }
+
+    private void OnBlockingChanged(SignalingToolEntry entry, bool value)
+    {
+        entry.IsBlocking = value;
+        if (!value)
+        {
+            entry.ResponseFormat = null;
+            entry.ResponseParameters = null;
+            entry.ResponsePromptFile = null;
+        }
+        else
+        {
+            entry.ResponseFormat ??= SignalingToolFactory.JsonResponseFormat;
+        }
+    }
+
+    private void OnResponseFormatChanged(SignalingToolEntry entry, string? format)
+    {
+        entry.ResponseFormat = format;
+        if (format == SignalingToolFactory.MarkdownResponseFormat)
+        {
+            entry.ResponseParameters = null;
+        }
+        else
+        {
+            entry.ResponsePromptFile = null;
+            entry.ResponseParameters ??= new Dictionary<string, ParameterDefinition>();
+        }
+    }
+
+    private Dictionary<string, ParameterDefinition> GetOrCreateResponseParameters(SignalingToolEntry entry)
+    {
+        entry.ResponseParameters ??= new Dictionary<string, ParameterDefinition>();
+        return entry.ResponseParameters;
+    }
+}

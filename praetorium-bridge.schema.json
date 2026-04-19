@@ -1,0 +1,396 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Praetorium Bridge Configuration Schema",
+  "description": "Configuration schema for the Praetorium Bridge MCP bridge server",
+  "type": "object",
+  "required": ["server", "defaults", "tools", "agentToolSources"],
+  "additionalProperties": false,
+  "properties": {
+    "server": {
+      "type": "object",
+      "description": "Server configuration for the bridge",
+      "required": ["port", "basePath", "bindAddress"],
+      "additionalProperties": false,
+      "properties": {
+        "port": {
+          "type": "integer",
+          "description": "Port number for the server to listen on",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 5100
+        },
+        "basePath": {
+          "type": "string",
+          "description": "Base path for all MCP endpoints",
+          "default": "/mcp",
+          "pattern": "^/[a-zA-Z0-9/_-]*$"
+        },
+        "bindAddress": {
+          "type": "string",
+          "description": "Network address to bind the server to",
+          "default": "localhost",
+          "examples": ["localhost", "127.0.0.1", "0.0.0.0"]
+        }
+      }
+    },
+    "defaults": {
+      "type": "object",
+      "description": "Default configuration values for agents, sessions, and signaling",
+      "required": ["agent", "session", "signaling"],
+      "additionalProperties": false,
+      "properties": {
+        "agent": {
+          "type": "object",
+          "description": "Default agent configuration",
+          "required": ["provider", "model", "reasoningEffort"],
+          "additionalProperties": false,
+          "properties": {
+            "provider": {
+              "type": "string",
+              "description": "AI provider to use for agent interactions",
+              "enum": ["github-copilot", "anthropic", "openai", "azure"]
+            },
+            "model": {
+              "type": "string",
+              "description": "Model name to use for agent interactions",
+              "examples": ["claude-sonnet-4", "claude-sonnet-3", "gpt-4", "gpt-4-turbo"]
+            },
+            "reasoningEffort": {
+              "type": "string",
+              "description": "Level of reasoning effort for the model",
+              "enum": ["low", "medium", "high"]
+            }
+          }
+        },
+        "session": {
+          "type": "object",
+          "description": "Default session configuration",
+          "required": ["mode", "poolTimeoutMinutes", "responseTimeoutMinutes", "responseTimeoutSeconds"],
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "type": "string",
+              "description": "Session mode for agent execution",
+              "enum": ["per-connection", "per-reference", "shared"],
+              "default": "per-connection"
+            },
+            "poolTimeoutMinutes": {
+              "type": "integer",
+              "description": "Minutes before an idle session is removed from the pool",
+              "minimum": 1,
+              "default": 30
+            },
+            "responseTimeoutMinutes": {
+              "type": "integer",
+              "description": "Minutes to wait for an agent response",
+              "minimum": 1,
+              "default": 10
+            },
+            "responseTimeoutSeconds": {
+              "type": "integer",
+              "description": "Seconds to wait for an agent response (alternative unit)",
+              "minimum": 1,
+              "default": 600
+            }
+          }
+        },
+        "signaling": {
+          "type": "object",
+          "description": "Default signaling configuration for agent communication",
+          "required": ["keepaliveIntervalSeconds"],
+          "additionalProperties": false,
+          "properties": {
+            "keepaliveIntervalSeconds": {
+              "type": "integer",
+              "description": "Interval in seconds between keepalive signals",
+              "minimum": 1,
+              "default": 15
+            }
+          }
+        }
+      }
+    },
+    "tools": {
+      "type": "object",
+      "description": "Tool definitions available to agents",
+      "additionalProperties": {
+        "$ref": "#/definitions/toolDefinition"
+      }
+    },
+    "agentToolSources": {
+      "type": "object",
+      "description": "Configuration for agent tool sources (MCP servers)",
+      "additionalProperties": {
+        "$ref": "#/definitions/toolSource"
+      }
+    }
+  },
+  "definitions": {
+    "toolDefinition": {
+      "type": "object",
+      "description": "Definition of a single tool",
+      "required": ["description"],
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": "string",
+          "description": "Human-readable description of what the tool does"
+        },
+        "parameters": {
+          "type": "object",
+          "description": "Input parameters for the tool",
+          "additionalProperties": {
+            "$ref": "#/definitions/parameter"
+          }
+        },
+        "fixedParameters": {
+          "type": "object",
+          "description": "Parameters that are always set to fixed values",
+          "additionalProperties": {}
+        },
+        "agent": {
+          "$ref": "#/definitions/agentConfig",
+          "description": "Agent-specific configuration for this tool"
+        },
+        "session": {
+          "$ref": "#/definitions/sessionConfig",
+          "description": "Session-specific configuration for this tool"
+        },
+        "signaling": {
+          "$ref": "#/definitions/signalingConfig",
+          "description": "Signaling configuration for this tool"
+        }
+      }
+    },
+    "parameter": {
+      "type": "object",
+      "description": "A single tool parameter",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Parameter type",
+          "enum": ["string", "number", "integer", "boolean", "array", "object"]
+        },
+        "description": {
+          "type": "string",
+          "description": "Parameter description"
+        },
+        "required": {
+          "type": "boolean",
+          "description": "Whether this parameter is required",
+          "default": false
+        },
+        "default": {
+          "description": "Default value if not provided"
+        },
+        "enum": {
+          "type": "array",
+          "description": "Allowed values for this parameter"
+        },
+        "items": {
+          "type": "object",
+          "description": "Schema for array items"
+        },
+        "pattern": {
+          "type": "string",
+          "description": "Regex pattern for string validation"
+        },
+        "minimum": {
+          "type": "number",
+          "description": "Minimum value for numbers"
+        },
+        "maximum": {
+          "type": "number",
+          "description": "Maximum value for numbers"
+        }
+      }
+    },
+    "agentConfig": {
+      "type": "object",
+      "description": "Agent configuration",
+      "additionalProperties": false,
+      "properties": {
+        "promptFile": {
+          "type": "string",
+          "description": "Path to the prompt file for this tool"
+        },
+        "tools": {
+          "type": "array",
+          "description": "List of MCP tools available to the agent",
+          "items": {
+            "type": "string"
+          }
+        },
+        "provider": {
+          "type": "string",
+          "description": "AI provider for this tool",
+          "enum": ["github-copilot", "anthropic", "openai", "azure"]
+        },
+        "model": {
+          "type": "string",
+          "description": "Model to use for this tool"
+        },
+        "reasoningEffort": {
+          "type": "string",
+          "description": "Reasoning effort level",
+          "enum": ["low", "medium", "high"]
+        }
+      }
+    },
+    "sessionConfig": {
+      "type": "object",
+      "description": "Session configuration",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "description": "Session mode",
+          "enum": ["per-connection", "per-reference", "shared"]
+        },
+        "referenceIdParameter": {
+          "type": "string",
+          "description": "Parameter name to use as session reference ID"
+        },
+        "poolTimeoutMinutes": {
+          "type": "integer",
+          "description": "Pool timeout in minutes",
+          "minimum": 1
+        },
+        "responseTimeoutMinutes": {
+          "type": "integer",
+          "description": "Response timeout in minutes",
+          "minimum": 1
+        },
+        "responseTimeoutSeconds": {
+          "type": "integer",
+          "description": "Response timeout in seconds",
+          "minimum": 1
+        }
+      }
+    },
+    "signalingConfig": {
+      "type": "object",
+      "description": "Signaling configuration",
+      "additionalProperties": false,
+      "properties": {
+        "tools": {
+          "type": "array",
+          "description": "Signaling tools available to the agent",
+          "items": {
+            "$ref": "#/definitions/signalingToolEntry"
+          }
+        },
+        "keepaliveIntervalSeconds": {
+          "type": "integer",
+          "description": "Keepalive interval in seconds",
+          "minimum": 1
+        }
+      }
+    },
+    "signalingToolEntry": {
+      "type": "object",
+      "description": "A signaling tool exposed to the agent",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Tool name. Built-ins are 'respond', 'request_input', 'await_signal'; custom names follow standard tool naming rules.",
+          "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$"
+        },
+        "description": {
+          "type": "string",
+          "description": "Description surfaced to the agent describing when to invoke this signaling tool."
+        },
+        "parameters": {
+          "type": "object",
+          "description": "Parameters the agent passes when invoking this signaling tool.",
+          "additionalProperties": { "$ref": "#/definitions/parameter" }
+        },
+        "isBlocking": {
+          "type": "boolean",
+          "description": "When true, the agent waits for a response signal; when false, the tool is fire-and-forget.",
+          "default": false
+        },
+        "responseFormat": {
+          "type": "string",
+          "description": "Response format for blocking tools.",
+          "enum": ["json", "markdown"]
+        },
+        "responseParameters": {
+          "type": "object",
+          "description": "When responseFormat is 'json', the schema of the fields returned to the agent.",
+          "additionalProperties": { "$ref": "#/definitions/parameter" }
+        },
+        "responsePromptFile": {
+          "type": "string",
+          "description": "When responseFormat is 'markdown', the prompt template file whose contents are returned as the response."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "isBlocking": { "const": true }, "responseFormat": { "const": "markdown" } },
+            "required": ["isBlocking", "responseFormat"]
+          },
+          "then": { "required": ["responsePromptFile"] }
+        }
+      ]
+    },
+    "toolSource": {
+      "type": "object",
+      "description": "Configuration for a tool source (MCP server)",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Type of tool source",
+          "enum": ["stdio", "http", "sse", "websocket"]
+        },
+        "command": {
+          "type": "string",
+          "description": "Command to execute (for stdio type)"
+        },
+        "args": {
+          "type": "array",
+          "description": "Arguments for the command",
+          "items": {
+            "type": "string"
+          }
+        },
+        "url": {
+          "type": "string",
+          "description": "URL for the tool source (for http, sse, websocket types)",
+          "format": "uri"
+        },
+        "headers": {
+          "type": "object",
+          "description": "HTTP headers to include in requests",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "env": {
+          "type": "object",
+          "description": "Environment variables for the tool source",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "stdio" } } },
+          "then": { "required": ["command"] }
+        },
+        {
+          "if": { "properties": { "type": { "enum": ["http", "sse", "websocket"] } } },
+          "then": { "required": ["url"] }
+        }
+      ]
+    }
+  }
+}

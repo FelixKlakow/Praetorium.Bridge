@@ -1,0 +1,315 @@
+/* =============================================
+   Brand
+   ============================================= */
+.sidebar-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 20px 16px 16px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    flex-shrink: 0;
+}
+
+.brand-icon {
+    width: 34px;
+    height: 34px;
+    background: #3b82f6;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    color: #ffffff;
+}
+
+.brand-icon svg {
+    width: 16px;
+    height: 16px;
+}
+
+.brand-text {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.25;
+}
+
+.brand-name {
+    font-size: 14px;
+    font-weight: 700;
+    color: #f1f5f9;
+    letter-spacing: -0.2px;
+}
+
+.brand-sub {
+    font-size: 10px;
+    font-weight: 600;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+/* =============================================
+   Mobile toggle
+   ============================================= */
+.navbar-toggler {
+    appearance: none;
+    cursor: pointer;
+    width: 3.5rem;
+    height: 2.5rem;
+    position: absolute;
+    top: 0.5rem;
+    right: 1rem;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 6px;
+    background: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3e%3cpath stroke='rgba%28255,255,255,0.6%29' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e") no-repeat center/1.5rem transparent;
+}
+
+.navbar-toggler:checked {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+/* =============================================
+   Scrollable nav wrapper
+   ============================================= */
+.nav-scrollable {
+    display: none;
+    flex: 1;
+    flex-direction: column;
+    overflow-y: auto;
+    min-height: 0;
+}
+
+.navbar-toggler:checked ~ .nav-scrollable {
+    display: flex;
+}
+
+@media (min-width: 641px) {
+    .navbar-toggler {
+        display: none;
+    }
+
+    .nav-scrollable {
+        display: flex;
+    }
+}
+
+
+.brand-icon {
+    width: 32px;
+    height: 32px;
+    background: var(--color-primary, #3b82f6);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    color: #ffffff;
+}
+
+.brand-icon svg {
+    width: 16px;
+    height: 16px;
+}
+
+.brand-text {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.2;
+}
+
+.brand-name {
+    font-size: 14px;
+    font-weight: 700;
+    color: #f1f5f9;
+    letter-spacing: -0.2px;
+}
+
+.brand-sub {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--sidebar-text, #94a3b8);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+}
+
+/* ---- Toggle (mobile) ---- */
+.navbar-toggler {
+    appearance: none;
+    cursor: pointer;
+    width: 3.5rem;
+    height: 2.5rem;
+    color: white;
+    position: absolute;
+    top: 0.5rem;
+    right: 1rem;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 6px;
+    background: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3e%3cpath stroke='rgba%28255, 255, 255, 0.6%29' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e") no-repeat center/1.5rem transparent;
+}
+
+.navbar-toggler:checked {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+/* ---- Nav ---- */
+.nav-scrollable {
+    display: none;
+    flex: 1;
+    flex-direction: column;
+    overflow-y: auto;
+}
+
+.navbar-toggler:checked ~ .nav-scrollable {
+    display: flex;
+}
+
+.sidebar-nav {
+    flex: 1;
+    padding: 12px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.sidebar-link {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 10px;
+    border-radius: 6px;
+    color: var(--sidebar-text, #94a3b8);
+    font-size: 13px;
+    font-weight: 500;
+    text-decoration: none;
+    border-left: 2px solid transparent;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+    cursor: pointer;
+    /* Reset all link pseudo-states to prevent Bootstrap bleed */
+    outline: none;
+}
+
+.sidebar-link:hover,
+.sidebar-link:focus {
+    background: var(--sidebar-item-hover, rgba(255, 255, 255, 0.06));
+    color: #e2e8f0;
+    text-decoration: none;
+}
+
+.sidebar-link.active {
+    background: var(--sidebar-item-active-bg, rgba(59, 130, 246, 0.18));
+    border-left-color: var(--sidebar-item-active-border, #3b82f6);
+    color: var(--sidebar-text-active, #f1f5f9);
+}
+
+.sidebar-link-icon {
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    opacity: 0.7;
+}
+
+.sidebar-link.active .sidebar-link-icon,
+.sidebar-link:hover .sidebar-link-icon {
+    opacity: 1;
+}
+
+.sidebar-link-icon svg {
+    width: 15px;
+    height: 15px;
+}
+
+/* ---- Footer ---- */
+.sidebar-footer {
+    padding: 12px 8px 16px;
+    border-top: 1px solid var(--sidebar-border, rgba(255, 255, 255, 0.06));
+    margin-top: auto;
+}
+
+.sidebar-footer-link {
+    display: block;
+    padding: 8px 10px;
+    border-radius: 6px;
+    color: var(--sidebar-text, #94a3b8);
+    font-size: 12px;
+    text-decoration: none;
+    transition: background 0.15s, color 0.15s;
+}
+
+.sidebar-footer-link:hover {
+    background: var(--sidebar-item-hover, rgba(255, 255, 255, 0.06));
+    color: #e2e8f0;
+    text-decoration: none;
+}
+
+@media (min-width: 641px) {
+    .navbar-toggler {
+        display: none;
+    }
+
+    .nav-scrollable {
+        display: flex;
+    }
+}
+
+}
+
+.nav-item {
+    font-size: 0.9rem;
+    padding-bottom: 0.5rem;
+}
+
+    .nav-item:first-of-type {
+        padding-top: 1rem;
+    }
+
+    .nav-item:last-of-type {
+        padding-bottom: 1rem;
+    }
+
+    .nav-item ::deep .nav-link {
+        color: #d7d7d7;
+        background: none;
+        border: none;
+        border-radius: 4px;
+        height: 3rem;
+        display: flex;
+        align-items: center;
+        line-height: 3rem;
+        width: 100%;
+    }
+
+.nav-item ::deep a.active {
+    background-color: rgba(255,255,255,0.37);
+    color: white;
+}
+
+.nav-item ::deep .nav-link:hover {
+    background-color: rgba(255,255,255,0.1);
+    color: white;
+}
+
+.nav-scrollable {
+    display: none;
+}
+
+.navbar-toggler:checked ~ .nav-scrollable {
+    display: block;
+}
+
+@media (min-width: 641px) {
+    .navbar-toggler {
+        display: none;
+    }
+
+    .nav-scrollable {
+        /* Never collapse the sidebar for wide screens */
+        display: block;
+
+        /* Allow sidebar to scroll for tall menus */
+        height: calc(100vh - 3.5rem);
+        overflow-y: auto;
+    }
+}

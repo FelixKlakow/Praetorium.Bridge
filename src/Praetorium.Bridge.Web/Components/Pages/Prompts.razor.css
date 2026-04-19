@@ -1,0 +1,213 @@
+.prompts-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 32px;
+}
+
+.prompts-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 1rem;
+    margin-bottom: 28px;
+}
+
+.prompts-header h1 {
+    margin: 0 0 6px 0;
+    color: var(--text-primary, #0f172a);
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+}
+
+.prompts-header .subtitle {
+    color: var(--text-secondary, #475569);
+    margin: 0;
+    font-size: 14px;
+}
+
+.prompts-content {
+    background: var(--surface-card, #ffffff);
+    border-radius: var(--border-radius, 8px);
+    padding: 20px;
+    box-shadow: var(--shadow-sm);
+    border: 1px solid var(--border-color, #e2e8f0);
+}
+
+.loading-state {
+    color: var(--text-tertiary, #94a3b8);
+    text-align: center;
+    padding: 2rem;
+}
+
+.empty-state {
+    text-align: center;
+    padding: 3rem;
+    color: var(--text-secondary, #475569);
+}
+
+.empty-state p {
+    margin: 0.5rem 0;
+}
+
+.empty-state .hint {
+    font-size: 0.875rem;
+    color: var(--text-tertiary, #94a3b8);
+}
+
+.prompts-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 10px;
+}
+
+.prompt-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    background: var(--surface-muted, #f8fafc);
+    border: 1px solid var(--border-color, #e2e8f0);
+    border-radius: 6px;
+    text-decoration: none;
+    color: var(--text-primary, #0f172a);
+    transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+
+.prompt-card:hover {
+    background: var(--surface-card, #ffffff);
+    border-color: var(--color-primary, #3b82f6);
+    box-shadow: var(--shadow-sm);
+    text-decoration: none;
+    color: var(--text-primary, #0f172a);
+}
+
+.prompt-icon {
+    font-size: 1.25rem;
+    flex-shrink: 0;
+}
+
+.prompt-name {
+    font-weight: 500;
+    word-break: break-word;
+    flex: 1;
+    font-size: 13px;
+}
+
+.prompt-refs {
+    font-size: 11px;
+    color: var(--text-tertiary, #94a3b8);
+    background: var(--border-color, #e2e8f0);
+    padding: 2px 8px;
+    border-radius: 999px;
+    white-space: nowrap;
+}
+
+.prompt-refs-unused {
+    color: #92400e;
+    background: #fef9c3;
+}
+
+@media (max-width: 640px) {
+    .prompts-container {
+        padding: 16px;
+    }
+}
+
+
+.prompts-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 1rem;
+    margin-bottom: 2rem;
+}
+
+.prompts-header h1 {
+    margin: 0 0 0.5rem 0;
+    color: #1a1a2e;
+    font-size: 2rem;
+}
+
+.prompts-header .subtitle {
+    color: #666;
+    margin: 0;
+}
+
+.prompts-content {
+    background: #fff;
+    border-radius: 8px;
+    padding: 1.5rem;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.loading-state {
+    color: #666;
+    text-align: center;
+    padding: 2rem;
+}
+
+.empty-state {
+    text-align: center;
+    padding: 3rem;
+    color: #666;
+}
+
+.empty-state p {
+    margin: 0.5rem 0;
+}
+
+.empty-state .hint {
+    font-size: 0.875rem;
+    color: #999;
+}
+
+.prompts-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 1rem;
+}
+
+.prompt-card {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 1rem;
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-radius: 6px;
+    text-decoration: none;
+    color: #1a1a2e;
+    transition: all 0.2s ease;
+}
+
+.prompt-card:hover {
+    background: #e9ecef;
+    border-color: #dee2e6;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+.prompt-icon {
+    font-size: 1.5rem;
+}
+
+.prompt-name {
+    font-weight: 500;
+    word-break: break-word;
+    flex: 1;
+}
+
+.prompt-refs {
+    font-size: 0.75rem;
+    color: #5a6268;
+    background: #e9ecef;
+    padding: 0.125rem 0.5rem;
+    border-radius: 999px;
+    white-space: nowrap;
+}
+
+.prompt-refs-unused {
+    color: #8a6d3b;
+    background: #fcf4d8;
+}
