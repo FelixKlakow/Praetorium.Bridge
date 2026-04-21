@@ -129,11 +129,11 @@
             }
             else if (selectedTool != null && currentTool != null)
             {
-                <ToolEditor Tool="currentTool" ToolName="selectedTool" OnSave="SaveToolAsync" OnDelete="DeleteToolAsync" AvailableToolSources="GetAvailableToolSources()" />
+                <ToolEditor Tool="currentTool" ToolName="@selectedTool" OnSave="SaveToolAsync" OnDelete="DeleteToolAsync" AvailableToolSources="GetAvailableToolSources()" />
             }
             else if (selectedAgent != null && currentAgentSource != null)
             {
-                <AgentSourceEditor SourceName="selectedAgent" Source="currentAgentSource" OnSave="SaveAgentSourceAsync" OnDelete="DeleteAgentSourceAsync" />
+                <AgentSourceEditor SourceName="@selectedAgent" Source="currentAgentSource" OnSave="SaveAgentSourceAsync" OnDelete="DeleteAgentSourceAsync" />
             }
             else if (selectedView == "defaults" && configuration?.Defaults != null)
             {

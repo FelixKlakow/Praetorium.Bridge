@@ -25,6 +25,7 @@ public class SessionManager : ISessionManager, IHostedService
     private readonly IBridgeHooks _hooks;
     private readonly ILogger<SessionManager> _logger;
     private readonly ConcurrentDictionary<string, IAgentSession> _activeAgents = new();
+    private readonly ConcurrentDictionary<string, Task<string>> _runningTurns = new();
     private Timer? _orphanDetectionTimer;
 
     /// <summary>
@@ -165,6 +166,7 @@ public class SessionManager : ISessionManager, IHostedService
 
         // Remove the agent session from tracking
         _activeAgents.TryRemove(sessionId, out _);
+        _runningTurns.TryRemove(sessionId, out _);
 
         session.State = SessionState.Pooled;
         session.LastActivityAt = DateTimeOffset.UtcNow;
@@ -200,6 +202,7 @@ public class SessionManager : ISessionManager, IHostedService
         }
 
         _activeAgents.TryRemove(sessionId, out _);
+        _runningTurns.TryRemove(sessionId, out _);
 
         session.State = SessionState.Pooled;
         session.LastActivityAt = DateTimeOffset.UtcNow;
@@ -253,6 +256,7 @@ public class SessionManager : ISessionManager, IHostedService
         }
 
         _activeAgents.TryRemove(sessionId, out _);
+        _runningTurns.TryRemove(sessionId, out _);
 
         session.State = SessionState.Crashed;
         session.LastActivityAt = DateTimeOffset.UtcNow;
@@ -281,6 +285,7 @@ public class SessionManager : ISessionManager, IHostedService
             throw new ArgumentException("Session ID cannot be null or empty.", nameof(sessionId));
 
         _activeAgents.TryRemove(sessionId, out _);
+        _runningTurns.TryRemove(sessionId, out _);
         _signalRegistry.RemoveSession(sessionId);
         await _sessionStore.RemoveAsync(sessionId, ct).ConfigureAwait(false);
     }
@@ -325,6 +330,7 @@ public class SessionManager : ISessionManager, IHostedService
             if (session.State != SessionState.Crashed && session.State != SessionState.Pooled)
             {
                 _activeAgents.TryRemove(session.SessionId, out _);
+                _runningTurns.TryRemove(session.SessionId, out _);
                 session.State = SessionState.Crashed;
                 session.LastActivityAt = DateTimeOffset.UtcNow;
                 await _sessionStore.SetAsync(session, ct).ConfigureAwait(false);
@@ -403,6 +409,7 @@ public class SessionManager : ISessionManager, IHostedService
                     session.State);
 
                 _activeAgents.TryRemove(session.SessionId, out _);
+                _runningTurns.TryRemove(session.SessionId, out _);
                 _signalRegistry.RemoveSession(session.SessionId);
                 await _sessionStore.RemoveAsync(session.SessionId, CancellationToken.None)
                     .ConfigureAwait(false);
@@ -471,13 +478,65 @@ public class SessionManager : ISessionManager, IHostedService
                 Guid.NewGuid().ToString(),
                 sessionId,
                 toolName,
-                session.ReferenceId);
+                session.ReferenceId,
+                prompt);
 
             await _hooks.OnSessionSpawnedAsync(hookContext, ct).ConfigureAwait(false);
         }
 
         _logger.LogInformation("Agent session created for session {SessionId}", sessionId);
         return aiAgent;
+    }
+
+    /// <inheritdoc/>
+    public void SetRunningTurn(string sessionId, Task<string> turnTask)
+    {
+        if (string.IsNullOrEmpty(sessionId))
+            throw new ArgumentException("Session ID cannot be null or empty.", nameof(sessionId));
+        if (turnTask == null)
+            throw new ArgumentNullException(nameof(turnTask));
+
+        _runningTurns[sessionId] = turnTask;
+    }
+
+    /// <inheritdoc/>
+    public Task<string>? GetRunningTurn(string sessionId)
+    {
+        if (string.IsNullOrEmpty(sessionId))
+            throw new ArgumentException("Session ID cannot be null or empty.", nameof(sessionId));
+
+        _runningTurns.TryGetValue(sessionId, out var turn);
+        return turn;
+    }
+
+    /// <inheritdoc/>
+    public void ClearRunningTurn(string sessionId)
+    {
+        if (string.IsNullOrEmpty(sessionId))
+            throw new ArgumentException("Session ID cannot be null or empty.", nameof(sessionId));
+
+        _runningTurns.TryRemove(sessionId, out _);
+    }
+
+    /// <inheritdoc/>
+    public async Task<bool> CancelSessionWaitsAsync(string sessionId, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(sessionId))
+            throw new ArgumentException("Session ID cannot be null or empty.", nameof(sessionId));
+
+        var session = await _sessionStore.GetAsync(sessionId, ct).ConfigureAwait(false);
+        if (session == null)
+        {
+            _logger.LogWarning("Session {SessionId} not found for cancel.", sessionId);
+            return false;
+        }
+
+        _signalRegistry.CancelWaiters(sessionId);
+        session.LastActivityAt = DateTimeOffset.UtcNow;
+        await _sessionStore.SetAsync(session, ct).ConfigureAwait(false);
+
+        _logger.LogInformation("Cancel requested for session {SessionId}; reset delivered on both channels.", sessionId);
+        return true;
     }
 
     /// <summary>

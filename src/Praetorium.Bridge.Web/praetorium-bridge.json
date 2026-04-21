@@ -6,6 +6,7 @@
   },
   "defaults": {
     "agent": {
+      "model": "claude-sonnet-4.6",
       "tools": []
     },
     "session": {
@@ -62,11 +63,26 @@
   },
   "tools": {
     "await_review": {
-      "description": "Review anything here while you work.",
+      "description": "Start or continue a review session. Supports any review target \u2014 a plan, a class, a diff, a PR, final code, or anything else worth reviewing. The reviewer may ask clarifying questions before delivering feedback; respond to each question to advance the review. Call with the same referenceId to continue an existing session.",
       "parameters": {
         "referenceId": {
           "type": "string",
           "description": "Tracks the conversation across multiple calls.",
+          "required": true
+        },
+        "workspace": {
+          "type": "string",
+          "description": "Absolute path to the workspace or repository root to review.",
+          "required": true
+        },
+        "baseBranch": {
+          "type": "string",
+          "description": "Git branch, tag, or commit to diff against (e.g. \u0027main\u0027, \u0027HEAD~1\u0027). When omitted, the review covers staged/unstaged changes only.",
+          "required": false
+        },
+        "context": {
+          "type": "string",
+          "description": "On the first call: the review scope (what to review, concerns, exclusions). On follow-up calls: the answer to the reviewer\u0027s last question.",
           "required": true
         }
       },
@@ -89,7 +105,7 @@
         "tools": [
           {
             "name": "respond",
-            "description": "Send a final response back to the caller and end the agent turn.",
+            "description": "Send a response or finding back to the caller. The session parks until the next call arrives \u2014 never self-terminate.",
             "parameters": {
               "message": {
                 "type": "string",
@@ -102,7 +118,8 @@
                 "required": false
               }
             },
-            "isBlocking": false
+            "isBlocking": true,
+            "responseParameters": {}
           },
           {
             "name": "request_input",
@@ -119,19 +136,7 @@
                 "required": false
               }
             },
-            "isBlocking": false
-          },
-          {
-            "name": "await_signal",
-            "description": "Pause and wait for an external signal before continuing.",
-            "parameters": {},
-            "isBlocking": false
-          },
-          {
-            "name": "test_",
-            "description": "Anywhere",
-            "parameters": {},
-            "isBlocking": false
+            "isBlocking": true
           }
         ]
       }

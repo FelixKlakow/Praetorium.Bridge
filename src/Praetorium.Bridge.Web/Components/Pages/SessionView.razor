@@ -1,0 +1,280 @@
+@page "/sessions"
+@rendermode InteractiveServer
+@using System.Threading
+@using Praetorium.Bridge.Agents
+@using Praetorium.Bridge.Sessions
+@using Praetorium.Bridge.Web.Services
+@inject SessionActivityService Activity
+@inject ILogger<SessionView> Logger
+@implements IDisposable
+
+<PageTitle>Sessions - Praetorium.Bridge</PageTitle>
+
+<div class="session-view-page">
+    <div class="session-header">
+        <div>
+            <h1>Sessions</h1>
+            <p class="subtitle">Watch live bridge activity, signaling, and agent internals per session. Use Cancel to release a session that is parked inside a blocking signaling tool.</p>
+        </div>
+        <div class="session-controls">
+            <label class="filter-label">
+                <input type="checkbox" @bind="autoFollow" /> Auto-scroll
+            </label>
+            <button class="cancel-button" @onclick="RefreshSessionsAsync" disabled="@isLoading">Refresh</button>
+        </div>
+    </div>
+
+    <div class="session-body">
+        <aside class="session-list">
+            <div class="session-list-header">
+                <h2>Active / known</h2>
+                <span class="badge">@sessions.Count</span>
+            </div>
+            @if (sessions.Count == 0)
+            {
+                <div class="empty-state small">No sessions yet — trigger a bridge tool to spawn one.</div>
+            }
+            else
+            {
+                <ul class="session-items">
+                    @foreach (var s in sessions)
+                    {
+                        <li class="@(s.SessionId == selectedSessionId ? "session-item selected" : "session-item")"
+                            @onclick="() => SelectSession(s.SessionId)">
+                            <div class="session-item-head">
+                                <span class="session-tool">@s.ToolName</span>
+                                <span class="session-state @StateClass(s.State)">@s.State</span>
+                            </div>
+                            <div class="session-item-id">@s.SessionId</div>
+                            <div class="session-item-meta">
+                                @if (!string.IsNullOrEmpty(s.ReferenceId))
+                                {
+                                    <span>ref: @s.ReferenceId</span>
+                                }
+                                <span>· @s.ToolCallCount calls</span>
+                            </div>
+                        </li>
+                    }
+                </ul>
+            }
+        </aside>
+
+        <section class="transcript-panel">
+            <div class="transcript-header">
+                <div class="transcript-title">
+                    @if (string.IsNullOrEmpty(selectedSessionId))
+                    {
+                        <h2>Select a session</h2>
+                    }
+                    else
+                    {
+                        <h2>@selectedSessionId</h2>
+                        <div class="transcript-sub">@transcript.Count entries</div>
+                    }
+                </div>
+                <div class="transcript-actions">
+                    <button class="cancel-button" @onclick="CancelWaitsAsync"
+                            disabled="@(string.IsNullOrEmpty(selectedSessionId) || isCancelling)"
+                            title="Release any blocking signaling waits on this session (Reset on both channels)">
+                        @(isCancelling ? "Cancelling…" : "Cancel waits")
+                    </button>
+                    <button class="cancel-button" @onclick="ClearTranscript"
+                            disabled="@(string.IsNullOrEmpty(selectedSessionId))">
+                        Clear view
+                    </button>
+                </div>
+            </div>
+
+            @if (!string.IsNullOrEmpty(lastError))
+            {
+                <div class="status-message error inline">@lastError</div>
+            }
+
+            <div class="transcript-scroll">
+                @if (string.IsNullOrEmpty(selectedSessionId))
+                {
+                    <div class="empty-state small">Pick a session on the left to see its live transcript.</div>
+                }
+                else if (transcript.Count == 0)
+                {
+                    <div class="empty-state small">No activity yet — events stream here as the session runs.</div>
+                }
+                else
+                {
+                    @foreach (var entry in transcript)
+                    {
+                        <div class="transcript-entry @SourceClass(entry.Source) @EntryKindClass(entry)">
+                            <div class="entry-head">
+                                <span class="entry-source">@entry.Source</span>
+                                <span class="entry-kind">@entry.Kind</span>
+                                @if (!string.IsNullOrEmpty(entry.Title))
+                                {
+                                    <span class="entry-title">@entry.Title</span>
+                                }
+                                <span class="entry-time">@entry.Timestamp.ToLocalTime().ToString("HH:mm:ss.fff")</span>
+                            </div>
+                            @if (!string.IsNullOrEmpty(entry.Details))
+                            {
+                                @if (entry.Source == SessionTranscriptSource.Agent && entry.Kind == nameof(AgentActivityKind.AssistantMessage))
+                                {
+                                    <div class="entry-details entry-details--message">@entry.Details</div>
+                                }
+                                else if (entry.Source == SessionTranscriptSource.Lifecycle && entry.Kind == "Prompt")
+                                {
+                                    <details class="entry-prompt-wrapper">
+                                        <summary class="entry-prompt-summary">Show system prompt</summary>
+                                        <pre class="entry-details entry-details--prompt">@entry.Details</pre>
+                                    </details>
+                                }
+                                else
+                                {
+                                    <pre class="entry-details">@entry.Details</pre>
+                                }
+                            }
+                        </div>
+                    }
+                }
+            </div>
+        </section>
+    </div>
+</div>
+
+@code {
+    private List<SessionInfo> sessions = new();
+    private List<SessionTranscriptEntry> transcript = new();
+    private string? selectedSessionId;
+    private bool autoFollow = true;
+    private bool isLoading;
+    private bool isCancelling;
+    private string? lastError;
+    private CancellationTokenSource? cts;
+    private readonly HashSet<string> clearedLocally = new(StringComparer.Ordinal);
+
+    protected override async Task OnInitializedAsync()
+    {
+        cts = new CancellationTokenSource();
+        Activity.EntryAdded += OnEntryAdded;
+        Activity.SessionsChanged += OnSessionsChanged;
+        await RefreshSessionsAsync();
+    }
+
+    private async Task RefreshSessionsAsync()
+    {
+        if (isLoading) return;
+        isLoading = true;
+        lastError = null;
+        try
+        {
+            var all = await Activity.GetSessionsAsync(cts?.Token ?? CancellationToken.None);
+            sessions = all.OrderByDescending(s => s.LastActivityAt).ToList();
+
+            if (selectedSessionId is null && sessions.Count > 0)
+            {
+                SelectSession(sessions[0].SessionId);
+            }
+        }
+        catch (Exception ex)
+        {
+            lastError = ex.Message;
+            Logger.LogError(ex, "Refresh sessions failed.");
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void SelectSession(string sessionId)
+    {
+        selectedSessionId = sessionId;
+        transcript = Activity.GetTranscript(sessionId).ToList();
+        clearedLocally.Remove(sessionId);
+        StateHasChanged();
+    }
+
+    private void ClearTranscript()
+    {
+        if (string.IsNullOrEmpty(selectedSessionId)) return;
+        transcript = new List<SessionTranscriptEntry>();
+        clearedLocally.Add(selectedSessionId);
+        StateHasChanged();
+    }
+
+    private async Task CancelWaitsAsync()
+    {
+        if (string.IsNullOrEmpty(selectedSessionId) || isCancelling) return;
+        isCancelling = true;
+        lastError = null;
+        try
+        {
+            var ok = await Activity.CancelWaitsAsync(selectedSessionId!, cts?.Token ?? CancellationToken.None);
+            if (!ok)
+            {
+                lastError = "Session not found or already torn down.";
+            }
+        }
+        catch (Exception ex)
+        {
+            lastError = ex.Message;
+            Logger.LogError(ex, "Cancel waits failed.");
+        }
+        finally
+        {
+            isCancelling = false;
+            StateHasChanged();
+        }
+    }
+
+    private void OnEntryAdded(SessionTranscriptEntry entry)
+    {
+        if (entry.SessionId != selectedSessionId) return;
+        if (clearedLocally.Contains(entry.SessionId)) return;
+
+        InvokeAsync(() =>
+        {
+            transcript.Add(entry);
+            StateHasChanged();
+        });
+    }
+
+    private void OnSessionsChanged()
+    {
+        InvokeAsync(async () =>
+        {
+            await RefreshSessionsAsync();
+        });
+    }
+
+    private static string StateClass(SessionState s) => s switch
+    {
+        SessionState.Active => "active",
+        SessionState.Responding => "responding",
+        SessionState.WaitingInput => "waiting",
+        SessionState.Pooled => "pooled",
+        SessionState.Crashed => "crashed",
+        SessionState.Spawning => "spawning",
+        _ => "other",
+    };
+
+    private static string SourceClass(SessionTranscriptSource s) => s switch
+    {
+        SessionTranscriptSource.Lifecycle => "lifecycle",
+        SessionTranscriptSource.Signaling => "signaling",
+        SessionTranscriptSource.Agent => "agent",
+        _ => "other",
+    };
+
+    private static string EntryKindClass(SessionTranscriptEntry entry) =>
+        entry.Source == SessionTranscriptSource.Agent && entry.Kind == nameof(AgentActivityKind.AssistantMessage)
+            ? "agent-message"
+            : string.Empty;
+
+    public void Dispose()
+    {
+        Activity.EntryAdded -= OnEntryAdded;
+        Activity.SessionsChanged -= OnSessionsChanged;
+        cts?.Cancel();
+        cts?.Dispose();
+    }
+}

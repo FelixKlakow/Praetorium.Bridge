@@ -90,6 +90,11 @@ public class ToolParameterBinder
         {
             foreach (var paramDef in toolDefinition.Parameters)
             {
+                // The referenceIdParameter is stripped from boundParameters intentionally
+                // (used for session routing only), so skip it during required-param validation.
+                if (!string.IsNullOrEmpty(referenceIdParamName) && paramDef.Key == referenceIdParamName)
+                    continue;
+
                 if (paramDef.Value.Required && !boundParameters.ContainsKey(paramDef.Key))
                 {
                     throw new ArgumentException(

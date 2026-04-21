@@ -1,6 +1,7 @@
 using GitHub.Copilot.SDK;
 using Microsoft.Extensions.DependencyInjection;
 using Praetorium.Bridge.Agents;
+using Praetorium.Bridge.CopilotProvider.InternalMcp;
 
 namespace Praetorium.Bridge.CopilotProvider;
 
@@ -41,6 +42,7 @@ public static class ServiceCollectionExtensions
         });
 
         services.AddSingleton<IAgentProvider, CopilotAgentProvider>();
+        services.AddSingleton<IInternalMcpRegistry, InternalMcpRegistry>();
         return services;
     }
 }

@@ -4,6 +4,7 @@
   "description": "Configuration schema for the Praetorium Bridge MCP bridge server",
   "type": "object",
   "required": ["server", "defaults", "tools", "agentToolSources"],
+  "$comment": "configAgent is optional; when absent, defaults.agent is used.",
   "additionalProperties": false,
   "properties": {
     "server": {
@@ -122,6 +123,29 @@
       "description": "Configuration for agent tool sources (MCP servers)",
       "additionalProperties": {
         "$ref": "#/definitions/toolSource"
+      }
+    },
+    "configAgent": {
+      "type": "object",
+      "description": "Defaults for the dashboard Config Agent (per-user chat that stages config changes).",
+      "additionalProperties": false,
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": ["github-copilot", "anthropic", "openai", "azure"]
+        },
+        "model": {
+          "type": "string",
+          "description": "Model name used by the Config Agent (selectable in the UI)."
+        },
+        "reasoningEffort": {
+          "type": "string",
+          "enum": ["low", "medium", "high"]
+        },
+        "promptFile": {
+          "type": "string",
+          "description": "Path to the system prompt file for the Config Agent."
+        }
       }
     }
   },
@@ -327,6 +351,15 @@
         "responsePromptFile": {
           "type": "string",
           "description": "When responseFormat is 'markdown', the prompt template file whose contents are returned as the response."
+        },
+        "outgoingFormat": {
+          "type": "string",
+          "description": "Format of the payload sent out to the external caller when this signal fires.",
+          "enum": ["json", "markdown"]
+        },
+        "outgoingPromptFile": {
+          "type": "string",
+          "description": "When outgoingFormat is 'markdown', the prompt template file whose contents are returned to the external caller."
         }
       },
       "allOf": [
@@ -336,6 +369,13 @@
             "required": ["isBlocking", "responseFormat"]
           },
           "then": { "required": ["responsePromptFile"] }
+        },
+        {
+          "if": {
+            "properties": { "outgoingFormat": { "const": "markdown" } },
+            "required": ["outgoingFormat"]
+          },
+          "then": { "required": ["outgoingPromptFile"] }
         }
       ]
     },

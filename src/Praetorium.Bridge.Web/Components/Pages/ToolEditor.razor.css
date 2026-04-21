@@ -28,6 +28,40 @@
     font-size: 13px;
 }
 
+.editor-header-text {
+    flex: 1;
+    min-width: 0;
+}
+
+.tool-description-input {
+    width: 100%;
+    min-height: 72px;
+    margin: 0;
+    padding: 8px 10px;
+    color: var(--text-secondary, #475569);
+    font-size: 13px;
+    line-height: 1.5;
+    font-family: inherit;
+    background: var(--surface-muted, #f8fafc);
+    border: 1px solid var(--border-color, #e2e8f0);
+    border-radius: 4px;
+    resize: vertical;
+    box-sizing: border-box;
+    transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
+}
+
+.tool-description-input:hover {
+    border-color: #cbd5e1;
+}
+
+.tool-description-input:focus {
+    outline: none;
+    background: #ffffff;
+    border-color: var(--color-primary, #3b82f6);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+    color: var(--text-primary, #0f172a);
+}
+
 .save-button {
     padding: 8px 20px;
     background: var(--color-primary, #3b82f6);
@@ -301,6 +335,20 @@
     align-items: center;
 }
 
+.header-actions.stacked {
+    flex-direction: column;
+    gap: 8px;
+    align-items: stretch;
+    min-width: 96px;
+}
+
+.header-actions.stacked .save-button,
+.header-actions.stacked .delete-button {
+    width: 100%;
+    text-align: center;
+    justify-content: center;
+}
+
 .delete-button {
     padding: 8px 16px;
     background: var(--color-danger-bg, #fef2f2);
@@ -378,6 +426,149 @@
     color: var(--text-secondary, #475569);
     font-size: 13px;
     margin: -8px 0 16px 0;
+}
+
+/* Prompt editor layout (main textarea + sidebar) */
+.prompt-editor-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 280px;
+    gap: 20px;
+    margin-top: 8px;
+}
+
+.prompt-main {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+}
+
+.prompt-textarea {
+    width: 100%;
+    background: var(--surface-card, #ffffff);
+    border: 1px solid var(--border-color, #e2e8f0);
+    border-radius: 6px;
+    padding: 12px 14px;
+    color: var(--text-primary, #0f172a);
+    font-family: var(--font-mono, 'Courier New', monospace);
+    font-size: 13px;
+    line-height: 1.55;
+    resize: vertical;
+    box-sizing: border-box;
+}
+
+.prompt-textarea:focus {
+    outline: none;
+    border-color: var(--color-primary, #3b82f6);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+}
+
+.placeholder-warn {
+    padding: 8px 10px;
+    background: #fffbeb;
+    border: 1px solid #fcd34d;
+    border-radius: 4px;
+    color: #92400e;
+    font-size: 12px;
+}
+
+.prompt-sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    min-width: 0;
+}
+
+.sidebar-block {
+    background: var(--surface-card, #ffffff);
+    border: 1px solid var(--border-color, #e2e8f0);
+    border-radius: 6px;
+    padding: 14px;
+}
+
+.sidebar-title {
+    margin: 0 0 10px 0;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-tertiary, #94a3b8);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.sidebar-empty {
+    margin: 0;
+    color: var(--text-tertiary, #9ca3af);
+    font-size: 12px;
+    font-style: italic;
+    text-align: center;
+    padding: 10px 0;
+}
+
+.chip-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.chip {
+    width: 100%;
+    text-align: left;
+    padding: 7px 10px;
+    background: var(--surface-muted, #f9fafb);
+    border: 1px solid var(--border-color, #e5e7eb);
+    border-radius: 4px;
+    color: var(--text-primary, #0f172a);
+    font-family: var(--font-mono, 'Courier New', monospace);
+    font-size: 11px;
+    cursor: pointer;
+    transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.chip:hover {
+    background: #eff6ff;
+    border-color: #bfdbfe;
+    color: #1d4ed8;
+}
+
+.chip:active {
+    transform: scale(0.98);
+}
+
+.placeholder-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.placeholder-list li {
+    background: var(--surface-muted, #f9fafb);
+    border: 1px solid var(--border-color, #e5e7eb);
+    border-radius: 4px;
+    padding: 7px 10px;
+    font-size: 11px;
+}
+
+.placeholder-list li code {
+    font-family: var(--font-mono, 'Courier New', monospace);
+    color: #ea580c;
+}
+
+.placeholder-list li.unknown {
+    background: #fffbeb;
+    border-color: #fcd34d;
+}
+
+.placeholder-list li.unknown code {
+    color: #92400e;
+}
+
+@media (max-width: 1100px) {
+    .prompt-editor-layout {
+        grid-template-columns: 1fr;
+    }
 }
 
 /* Add button styles */

@@ -6,11 +6,16 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>Praetorium.Bridge.Web</RootNamespace>
     <BlazorDisableThrowNavigationException>true</BlazorDisableThrowNavigationException>
+    <Version>0.1.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Praetorium.Bridge\Praetorium.Bridge.csproj" />
     <ProjectReference Include="..\Praetorium.Bridge.CopilotProvider\Praetorium.Bridge.CopilotProvider.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="1.2.0" />
   </ItemGroup>
 
 </Project>

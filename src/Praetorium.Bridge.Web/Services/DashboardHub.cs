@@ -15,6 +15,20 @@ public record ActivityLogEntry(
     string? Details);
 
 /// <summary>
+/// Lifecycle/activity event scoped to a specific session. Emitted by
+/// DashboardBridgeHooks alongside the global ActivityLog whenever a hook
+/// carries a SessionId, so the per-session dashboard view can render a
+/// clean, session-filtered transcript without having to de-multiplex the
+/// global log.
+/// </summary>
+public record SessionLifecycleEntry(
+    DateTimeOffset Timestamp,
+    string SessionId,
+    string Kind,
+    string? ToolName,
+    string? Details);
+
+/// <summary>
 /// SignalR hub for broadcasting live dashboard updates to connected clients.
 /// </summary>
 public class DashboardHub : Hub

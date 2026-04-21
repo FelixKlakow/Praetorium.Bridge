@@ -1,0 +1,336 @@
+@page "/config-agent"
+@rendermode InteractiveServer
+@using System.Threading
+@using Praetorium.Bridge.Web.Services.ConfigAgent
+@inject ConfigAgentService Agent
+@inject ILogger<ConfigAgent> Logger
+@implements IDisposable
+
+<PageTitle>Config Agent - Praetorium.Bridge</PageTitle>
+
+<div class="config-agent-page">
+    <div class="agent-header">
+        <div>
+            <h1>Config Agent</h1>
+            <p class="subtitle">Ask the agent to inspect or modify your bridge configuration. Changes are staged until you apply them.</p>
+        </div>
+        <div class="agent-controls">
+            <label class="model-label">
+                Model
+                <select class="form-input inline" @bind="selectedModel" @bind:after="OnModelChangedAsync" disabled="@isSending">
+                    @if (availableModels.Count == 0)
+                    {
+                        <option value="@selectedModel">@selectedModel</option>
+                    }
+                    else
+                    {
+                        @foreach (var m in availableModels)
+                        {
+                            <option value="@m">@m</option>
+                        }
+                    }
+                </select>
+            </label>
+            <button class="cancel-button" @onclick="NewChatAsync" disabled="@isSending">New chat</button>
+        </div>
+    </div>
+
+    <div class="agent-body @PanelSizeClass">
+        <div class="chat-panel">
+            <div class="chat-scroll">
+                @if (Agent.Messages.Count == 0)
+                {
+                    <div class="empty-state small">Start a conversation — e.g. "Add a new tool called 'summarize_pr' that takes a pr_number parameter and uses the code-review prompt."</div>
+                }
+                @foreach (var msg in Agent.Messages)
+                {
+                    <div class="chat-message @RoleClass(msg.Role)">
+                        <div class="chat-role">@msg.Role</div>
+                        <div class="chat-content">@msg.Content</div>
+                    </div>
+                }
+                @if (isSending)
+                {
+                    <div class="chat-message assistant pending">
+                        <div class="chat-role">assistant</div>
+                        <div class="chat-content"><em>Thinking…</em></div>
+                    </div>
+                }
+            </div>
+
+            <div class="chat-input">
+                <textarea class="form-input" rows="3"
+                          placeholder="Describe what to add, change, or inspect… (Enter to send, Shift+Enter for newline)"
+                          value="@draftMessage"
+                          @oninput="OnDraftInput"
+                          @onkeydown="OnKeyDown"
+                          @onkeydown:preventDefault="suppressEnter"
+                          disabled="@isSending"></textarea>
+                <div class="chat-input-actions">
+                    @if (!string.IsNullOrEmpty(lastError))
+                    {
+                        <div class="status-message error inline">@lastError</div>
+                    }
+                    <button class="save-button" @onclick="SendAsync" disabled="@(isSending || string.IsNullOrWhiteSpace(draftMessage))">
+                        @(isSending ? "Sending…" : "Send")
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <aside class="changes-panel">
+            <div class="changes-header">
+                <h2>Pending changes</h2>
+                <div class="changes-actions">
+                    <button class="cancel-button small" title="Toggle panel size" @onclick="CyclePanelSize">@PanelSizeIcon</button>
+                    <button class="cancel-button small" @onclick="DiscardPending" disabled="@(changeSet.IsEmpty || isApplying)">Discard</button>
+                    <button class="save-button small" @onclick="ApplyPendingAsync" disabled="@(changeSet.IsEmpty || isApplying)">Apply</button>
+                </div>
+            </div>
+
+            @if (changeSet.IsEmpty)
+            {
+                <div class="empty-state small">No pending changes.</div>
+            }
+            else
+            {
+                @if (changeSet.ConfigChanges.Count > 0)
+                {
+                    <div class="changes-group">
+                        <div class="changes-group-label">Configuration</div>
+                        @foreach (var change in changeSet.ConfigChanges)
+                        {
+                            var key = $"cfg:{change.Section}:{change.Key}";
+                            <div class="change-entry">
+                                <button class="change-entry-head" @onclick="() => ToggleExpanded(key)">
+                                    <span class="change-kind @change.Kind.ToString().ToLowerInvariant()">@change.Kind</span>
+                                    <span class="change-section">@change.Section</span>
+                                    @if (!string.IsNullOrEmpty(change.Key))
+                                    {
+                                        <span class="change-key">@change.Key</span>
+                                    }
+                                    <span class="change-toggle">@(expanded.Contains(key) ? "▾" : "▸")</span>
+                                </button>
+                                @if (expanded.Contains(key))
+                                {
+                                    <div class="change-diff">
+                                        @if (change.BeforeJson != null)
+                                        {
+                                            <div class="diff-block before" data-label="before"><pre>@change.BeforeJson</pre></div>
+                                        }
+                                        @if (change.AfterJson != null)
+                                        {
+                                            <div class="diff-block after" data-label="after"><pre>@change.AfterJson</pre></div>
+                                        }
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+
+                @if (changeSet.PromptChanges.Count > 0)
+                {
+                    <div class="changes-group">
+                        <div class="changes-group-label">Prompts</div>
+                        @foreach (var change in changeSet.PromptChanges)
+                        {
+                            var key = $"pr:{change.RelativePath}";
+                            <div class="change-entry">
+                                <button class="change-entry-head" @onclick="() => ToggleExpanded(key)">
+                                    <span class="change-kind @change.Kind.ToString().ToLowerInvariant()">@change.Kind</span>
+                                    <span class="change-key">@change.RelativePath</span>
+                                    <span class="change-toggle">@(expanded.Contains(key) ? "▾" : "▸")</span>
+                                </button>
+                                @if (expanded.Contains(key))
+                                {
+                                    <div class="change-diff">
+                                        @if (change.BeforeContent != null)
+                                        {
+                                            <div class="diff-block before" data-label="before"><pre>@change.BeforeContent</pre></div>
+                                        }
+                                        @if (change.AfterContent != null)
+                                        {
+                                            <div class="diff-block after" data-label="after"><pre>@change.AfterContent</pre></div>
+                                        }
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+            }
+        </aside>
+    </div>
+</div>
+
+@code {
+    private string draftMessage = string.Empty;
+    private string selectedModel = string.Empty;
+    private List<string> availableModels = new();
+    private HashSet<string> expanded = new(StringComparer.Ordinal);
+    private ConfigChangeSet changeSet = EmptyChangeSet();
+    private bool isSending;
+    private bool isApplying;
+    private bool suppressEnter;
+    private int panelSize; // 0 = normal, 1 = wide, 2 = full
+    private string? lastError;
+    private CancellationTokenSource? cts;
+
+    private string PanelSizeClass => panelSize switch
+    {
+        1 => "panel-wide",
+        2 => "panel-full",
+        _ => "panel-normal",
+    };
+
+    private string PanelSizeIcon => panelSize switch
+    {
+        1 => "⇤",
+        2 => "⇤",
+        _ => "⇥",
+    };
+
+    private void CyclePanelSize() => panelSize = (panelSize + 1) % 3;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Agent.StateChanged += OnStateChanged;
+        selectedModel = Agent.ActiveModel ?? Agent.ResolveDefaultModel();
+        cts = new CancellationTokenSource();
+        try
+        {
+            var models = await Agent.GetAvailableModelsAsync(cts.Token);
+            availableModels = models.ToList();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Could not list models.");
+        }
+        RefreshChangeSet();
+    }
+
+    private void OnStateChanged()
+    {
+        InvokeAsync(() =>
+        {
+            RefreshChangeSet();
+            StateHasChanged();
+        });
+    }
+
+    private void RefreshChangeSet() => changeSet = Agent.GetChangeSet();
+
+    private async Task SendAsync()
+    {
+        if (string.IsNullOrWhiteSpace(draftMessage) || isSending) return;
+        lastError = null;
+        var prompt = draftMessage.Trim();
+        draftMessage = string.Empty;
+        isSending = true;
+        StateHasChanged();
+
+        try
+        {
+            await Agent.SendAsync(prompt, cts?.Token ?? CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            lastError = ex.Message;
+            Logger.LogError(ex, "ConfigAgent send failed.");
+        }
+        finally
+        {
+            isSending = false;
+            RefreshChangeSet();
+            StateHasChanged();
+        }
+    }
+
+    private void OnDraftInput(ChangeEventArgs e)
+    {
+        draftMessage = e.Value?.ToString() ?? string.Empty;
+    }
+
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        suppressEnter = e.Key == "Enter" && !e.ShiftKey;
+        if (suppressEnter)
+        {
+            await SendAsync();
+        }
+    }
+
+    private async Task NewChatAsync()
+    {
+        lastError = null;
+        try
+        {
+            await Agent.StartNewChatAsync(selectedModel, cts?.Token ?? CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            lastError = ex.Message;
+            Logger.LogError(ex, "New chat failed.");
+        }
+    }
+
+    private async Task OnModelChangedAsync()
+    {
+        if (string.Equals(selectedModel, Agent.ActiveModel, StringComparison.Ordinal)) return;
+        await NewChatAsync();
+    }
+
+    private void DiscardPending()
+    {
+        Agent.DiscardPending();
+        RefreshChangeSet();
+    }
+
+    private async Task ApplyPendingAsync()
+    {
+        if (changeSet.IsEmpty || isApplying) return;
+        isApplying = true;
+        lastError = null;
+        try
+        {
+            await Agent.ApplyAsync(cts?.Token ?? CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            lastError = ex.Message;
+            Logger.LogError(ex, "Apply failed.");
+        }
+        finally
+        {
+            isApplying = false;
+            RefreshChangeSet();
+            StateHasChanged();
+        }
+    }
+
+    private void ToggleExpanded(string key)
+    {
+        if (!expanded.Add(key)) expanded.Remove(key);
+    }
+
+    private static string RoleClass(ConfigAgentMessageRole role) => role switch
+    {
+        ConfigAgentMessageRole.User => "user",
+        ConfigAgentMessageRole.Assistant => "assistant",
+        _ => "system",
+    };
+
+    private static ConfigChangeSet EmptyChangeSet() => new()
+    {
+        ConfigChanges = Array.Empty<ConfigChange>(),
+        PromptChanges = Array.Empty<PromptChange>(),
+    };
+
+    public void Dispose()
+    {
+        Agent.StateChanged -= OnStateChanged;
+        cts?.Cancel();
+        cts?.Dispose();
+    }
+}

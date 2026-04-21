@@ -31,4 +31,11 @@ public class BridgeConfiguration
     /// </summary>
     [JsonPropertyName("agentToolSources")]
     public Dictionary<string, AgentToolSource> AgentToolSources { get; set; } = new();
+
+    /// <summary>
+    /// Configuration for the dashboard Config Agent (per-user, staged-changes chat).
+    /// Optional: when absent the defaults.agent values are used.
+    /// </summary>
+    [JsonPropertyName("configAgent")]
+    public ConfigAgentConfiguration? ConfigAgent { get; set; }
 }

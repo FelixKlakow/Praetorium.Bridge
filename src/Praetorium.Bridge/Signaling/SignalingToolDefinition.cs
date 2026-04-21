@@ -2,6 +2,7 @@ using System;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using ModelContextProtocol;
 
 namespace Praetorium.Bridge.Signaling;
 
@@ -21,7 +22,7 @@ public class SignalingToolDefinition
         string name,
         string description,
         JsonElement parametersSchema,
-        Func<JsonElement, CancellationToken, Task<string>> handler)
+        Func<JsonElement, IProgress<ProgressNotificationValue>?, CancellationToken, Task<string>> handler)
     {
         Name = name ?? throw new ArgumentNullException(nameof(name));
         Description = description ?? throw new ArgumentNullException(nameof(description));
@@ -45,7 +46,9 @@ public class SignalingToolDefinition
     public JsonElement ParametersSchema { get; }
 
     /// <summary>
-    /// Gets the handler function that executes the tool.
+    /// Gets the handler function that executes the tool. The optional
+    /// <see cref="IProgress{T}"/> argument must be used by blocking handlers to emit periodic
+    /// keepalive notifications while the other side is working.
     /// </summary>
-    public Func<JsonElement, CancellationToken, Task<string>> Handler { get; }
+    public Func<JsonElement, IProgress<ProgressNotificationValue>?, CancellationToken, Task<string>> Handler { get; }
 }

@@ -1,5 +1,7 @@
 @using Praetorium.Bridge.Configuration
 @using Praetorium.Bridge.Signaling
+@using Praetorium.Bridge.Web.Services
+@inject ConfigurationService ConfigService
 
 <div class="section">
     <h3>Signaling Configuration</h3>
@@ -15,14 +17,17 @@
         <div class="section-header">
             <label>Signaling Tools:</label>
             <div class="add-signaling-actions">
-                <select @bind="selectedDefaultToAdd" class="form-input inline">
-                    <option value="">-- Add default signaling --</option>
-                    @foreach (var def in availableDefaults)
-                    {
-                        <option value="@def">@def</option>
-                    }
-                </select>
-                <button class="add-button small" @onclick="AddDefault" disabled="@(string.IsNullOrEmpty(selectedDefaultToAdd))">+ Add Default</button>
+                @if (ShowDefaultPresets)
+                {
+                    <select @bind="selectedDefaultToAdd" class="form-input inline">
+                        <option value="">-- Add default signaling --</option>
+                        @foreach (var def in availableDefaults)
+                        {
+                            <option value="@def">@def</option>
+                        }
+                    </select>
+                    <button class="add-button small" @onclick="AddDefault" disabled="@(string.IsNullOrEmpty(selectedDefaultToAdd))">+ Add Default</button>
+                }
                 <button class="add-button small" @onclick="ShowAddCustom">+ Add Custom</button>
             </div>
         </div>
@@ -64,6 +69,7 @@
                     var index = i;
                     var isBuiltIn = IsBuiltInName(entry.Name);
                     var expanded = expandedIndex == index;
+                    var supportsOutgoing = !IsAwaitSignal(entry.Name);
                     <div class="signaling-entry">
                         <div class="entry-header">
                             <button class="expand-toggle" @onclick="() => ToggleExpand(index)" title="@(expanded ? "Collapse" : "Expand")">
@@ -102,6 +108,53 @@
                                 <ParameterListEditor Parameters="entry.Parameters" Title="Request Parameters"
                                                      EmptyText="No request parameters. The agent invokes this signal without arguments." />
 
+                                @if (supportsOutgoing)
+                                {
+                                    <div class="signal-direction">
+                                        <div class="direction-label">→ Outgoing (to external caller)</div>
+
+                                        <div class="form-group">
+                                            <label>Outgoing Format:</label>
+                                            <select value="@(entry.OutgoingFormat ?? SignalingToolFactory.JsonResponseFormat)"
+                                                    @onchange="(e) => OnOutgoingFormatChanged(entry, e.Value?.ToString())"
+                                                    class="form-input">
+                                                <option value="@SignalingToolFactory.JsonResponseFormat">JSON (structured payload)</option>
+                                                <option value="@SignalingToolFactory.MarkdownResponseFormat">Markdown (template file)</option>
+                                            </select>
+                                            <p class="field-hint">Format of the data delivered to the external caller when the agent invokes this signal.</p>
+                                        </div>
+
+                                        @if (IsMarkdown(entry.OutgoingFormat))
+                                        {
+                                            <div class="form-group">
+                                                <label>Outgoing Prompt File:</label>
+                                                <input type="text" value="@entry.OutgoingPromptFile"
+                                                       @onchange="(e) => OnPromptFilePathChanged(entry, PromptSlot.Outgoing, e.Value?.ToString())"
+                                                       class="form-input" />
+                                            </div>
+                                            <div class="form-group">
+                                                <label>Template:</label>
+                                                <textarea class="form-textarea prompt-inline-editor" rows="8"
+                                                          value="@GetLoadedContent(entry.OutgoingPromptFile)"
+                                                          @onchange="(e) => OnPromptContentChanged(entry.OutgoingPromptFile, e.Value?.ToString())"></textarea>
+                                                @{
+                                                    var unknownOut = FindUnknownPlaceholders(entry, entry.OutgoingPromptFile);
+                                                }
+                                                @if (unknownOut.Count > 0)
+                                                {
+                                                    <div class="placeholder-warn">
+                                                        Unknown placeholder@(unknownOut.Count == 1 ? "" : "s"):
+                                                        @string.Join(", ", unknownOut.Select(p => $"{{{{{p}}}}}"))
+                                                    </div>
+                                                }
+                                                <p class="field-hint">
+                                                    Rendered with the agent's signal parameters. Available placeholders: @FormatPlaceholderHints(entry)
+                                                </p>
+                                            </div>
+                                        }
+                                    </div>
+                                }
+
                                 <div class="form-group">
                                     <label class="checkbox-label">
                                         <input type="checkbox" checked="@entry.IsBlocking"
@@ -114,45 +167,42 @@
 
                                 @if (entry.IsBlocking)
                                 {
-                                    <div class="form-group">
-                                        <label>Response Format:</label>
-                                        <select value="@(entry.ResponseFormat ?? "json")"
-                                                @onchange="(e) => OnResponseFormatChanged(entry, e.Value?.ToString())"
-                                                class="form-input">
-                                            <option value="json">JSON (structured response)</option>
-                                            <option value="markdown">Markdown (prompt template)</option>
-                                        </select>
-                                    </div>
+                                    <div class="signal-direction">
+                                        <div class="direction-label">← Response (from external caller back to agent)</div>
 
-                                    @if (entry.ResponseFormat == "markdown")
-                                    {
                                         <div class="form-group">
-                                            <label>Response Prompt File:</label>
-                                            @if (AvailablePromptFiles.Count == 0)
-                                            {
-                                                <p class="field-hint field-hint-warn">No prompt files found. Create one in the Prompts tab first.</p>
-                                            }
-                                            else
-                                            {
-                                                <select value="@(entry.ResponsePromptFile ?? string.Empty)"
-                                                        @onchange="(e) => entry.ResponsePromptFile = e.Value?.ToString()"
-                                                        class="form-input">
-                                                    <option value="">-- Select a prompt file --</option>
-                                                    @foreach (var file in AvailablePromptFiles)
-                                                    {
-                                                        <option value="@file">@file</option>
-                                                    }
-                                                </select>
-                                            }
-                                            <p class="field-hint">Contents of the selected markdown file are returned verbatim to the agent.</p>
+                                            <label>Response Format:</label>
+                                            <select value="@(entry.ResponseFormat ?? SignalingToolFactory.JsonResponseFormat)"
+                                                    @onchange="(e) => OnResponseFormatChanged(entry, e.Value?.ToString())"
+                                                    class="form-input">
+                                                <option value="@SignalingToolFactory.JsonResponseFormat">JSON (structured response)</option>
+                                                <option value="@SignalingToolFactory.MarkdownResponseFormat">Markdown (prompt template)</option>
+                                            </select>
                                         </div>
-                                    }
-                                    else
-                                    {
-                                        <ParameterListEditor Parameters="GetOrCreateResponseParameters(entry)"
-                                                             Title="Response Parameters"
-                                                             EmptyText="No response parameters. The response schema is an empty object." />
-                                    }
+
+                                        @if (IsMarkdown(entry.ResponseFormat))
+                                        {
+                                            <div class="form-group">
+                                                <label>Response Prompt File:</label>
+                                                <input type="text" value="@entry.ResponsePromptFile"
+                                                       @onchange="(e) => OnPromptFilePathChanged(entry, PromptSlot.Response, e.Value?.ToString())"
+                                                       class="form-input" />
+                                            </div>
+                                            <div class="form-group">
+                                                <label>Template:</label>
+                                                <textarea class="form-textarea prompt-inline-editor" rows="8"
+                                                          value="@GetLoadedContent(entry.ResponsePromptFile)"
+                                                          @onchange="(e) => OnPromptContentChanged(entry.ResponsePromptFile, e.Value?.ToString())"></textarea>
+                                                <p class="field-hint">Contents are returned verbatim to the agent as the blocking response.</p>
+                                            </div>
+                                        }
+                                        else
+                                        {
+                                            <ParameterListEditor Parameters="GetOrCreateResponseParameters(entry)"
+                                                                 Title="Response Parameters"
+                                                                 EmptyText="No response parameters. The response schema is an empty object." />
+                                        }
+                                    </div>
                                 }
                             </div>
                         }
@@ -170,12 +220,30 @@
     [Parameter]
     public IReadOnlyList<string> AvailablePromptFiles { get; set; } = Array.Empty<string>();
 
+    [Parameter]
+    public string ToolName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// When false, hides the built-in preset dropdown ("respond", "request_input", "await_signal")
+    /// and its "+ Add Default" button. Set to false from the Defaults page, where these presets
+    /// would be redundant (the list itself IS the defaults).
+    /// </summary>
+    [Parameter]
+    public bool ShowDefaultPresets { get; set; } = true;
+
+    private enum PromptSlot { Outgoing, Response }
+
     private readonly string[] availableDefaults = new[]
     {
         SignalingToolFactory.RespondToolName,
         SignalingToolFactory.RequestInputToolName,
         SignalingToolFactory.AwaitSignalToolName,
     };
+
+    // Loaded markdown content for inline editing. Key is the (normalized) file name.
+    private readonly Dictionary<string, string> loadedContent = new(StringComparer.OrdinalIgnoreCase);
+    // Files that have been edited since last save.
+    private readonly HashSet<string> dirtyFiles = new(StringComparer.OrdinalIgnoreCase);
 
     private int expandedIndex = -1;
     private string selectedDefaultToAdd = string.Empty;
@@ -189,10 +257,33 @@
         Signaling.Tools ??= new List<SignalingToolEntry>();
     }
 
+    /// <summary>
+    /// Persists any edited outgoing/response prompt files to disk. Called by the parent
+    /// editor before it saves the tool's JSON configuration.
+    /// </summary>
+    public async Task SavePendingPromptsAsync(CancellationToken ct = default)
+    {
+        if (dirtyFiles.Count == 0) return;
+
+        foreach (var file in dirtyFiles.ToList())
+        {
+            if (!loadedContent.TryGetValue(file, out var content))
+                continue;
+            await ConfigService.SavePromptContentAsync(file, content, ct);
+        }
+        dirtyFiles.Clear();
+    }
+
     private static bool IsBuiltInName(string name) =>
         name is SignalingToolFactory.RespondToolName
              or SignalingToolFactory.RequestInputToolName
              or SignalingToolFactory.AwaitSignalToolName;
+
+    private static bool IsAwaitSignal(string name) =>
+        name == SignalingToolFactory.AwaitSignalToolName;
+
+    private static bool IsMarkdown(string? format) =>
+        string.Equals(format, SignalingToolFactory.MarkdownResponseFormat, StringComparison.OrdinalIgnoreCase);
 
     private void ToggleExpand(int index)
     {
@@ -235,6 +326,7 @@
                 },
             },
             IsBlocking = false,
+            OutgoingFormat = SignalingToolFactory.JsonResponseFormat,
         },
         SignalingToolFactory.RequestInputToolName => new SignalingToolEntry
         {
@@ -256,6 +348,7 @@
                 },
             },
             IsBlocking = true,
+            OutgoingFormat = SignalingToolFactory.JsonResponseFormat,
             ResponseFormat = SignalingToolFactory.JsonResponseFormat,
             ResponseParameters = new Dictionary<string, ParameterDefinition>
             {
@@ -321,6 +414,7 @@
             Description = newCustomDescription,
             Parameters = new Dictionary<string, ParameterDefinition>(),
             IsBlocking = false,
+            OutgoingFormat = SignalingToolFactory.JsonResponseFormat,
         });
 
         expandedIndex = Signaling.Tools.Count - 1;
@@ -353,18 +447,136 @@
         }
     }
 
-    private void OnResponseFormatChanged(SignalingToolEntry entry, string? format)
+    private async Task OnOutgoingFormatChanged(SignalingToolEntry entry, string? format)
+    {
+        entry.OutgoingFormat = format;
+        if (IsMarkdown(format))
+        {
+            if (string.IsNullOrWhiteSpace(entry.OutgoingPromptFile))
+                entry.OutgoingPromptFile = DefaultPromptFile(entry, PromptSlot.Outgoing);
+            await EnsureLoadedAsync(entry.OutgoingPromptFile);
+        }
+    }
+
+    private async Task OnResponseFormatChanged(SignalingToolEntry entry, string? format)
     {
         entry.ResponseFormat = format;
-        if (format == SignalingToolFactory.MarkdownResponseFormat)
+        if (IsMarkdown(format))
         {
             entry.ResponseParameters = null;
+            if (string.IsNullOrWhiteSpace(entry.ResponsePromptFile))
+                entry.ResponsePromptFile = DefaultPromptFile(entry, PromptSlot.Response);
+            await EnsureLoadedAsync(entry.ResponsePromptFile);
         }
         else
         {
             entry.ResponsePromptFile = null;
             entry.ResponseParameters ??= new Dictionary<string, ParameterDefinition>();
         }
+    }
+
+    private async Task OnPromptFilePathChanged(SignalingToolEntry entry, PromptSlot slot, string? newPath)
+    {
+        var trimmed = (newPath ?? string.Empty).Trim();
+        if (slot == PromptSlot.Outgoing)
+            entry.OutgoingPromptFile = trimmed;
+        else
+            entry.ResponsePromptFile = trimmed;
+
+        if (!string.IsNullOrEmpty(trimmed))
+            await EnsureLoadedAsync(trimmed);
+    }
+
+    private void OnPromptContentChanged(string? file, string? content)
+    {
+        if (string.IsNullOrWhiteSpace(file)) return;
+        var key = NormalizeFile(file);
+        loadedContent[key] = content ?? string.Empty;
+        dirtyFiles.Add(key);
+    }
+
+    private string GetLoadedContent(string? file)
+    {
+        if (string.IsNullOrWhiteSpace(file)) return string.Empty;
+        return loadedContent.TryGetValue(NormalizeFile(file), out var c) ? c : string.Empty;
+    }
+
+    private async Task EnsureLoadedAsync(string? file)
+    {
+        if (string.IsNullOrWhiteSpace(file)) return;
+        var key = NormalizeFile(file);
+        if (loadedContent.ContainsKey(key)) return;
+
+        try
+        {
+            var content = await ConfigService.GetPromptContentAsync(key);
+            loadedContent[key] = content;
+        }
+        catch
+        {
+            loadedContent[key] = string.Empty;
+        }
+    }
+
+    private string DefaultPromptFile(SignalingToolEntry entry, PromptSlot slot)
+    {
+        var tool = SanitizeSegment(string.IsNullOrWhiteSpace(ToolName) ? "tool" : ToolName);
+        var signal = SanitizeSegment(string.IsNullOrWhiteSpace(entry.Name) ? "signal" : entry.Name);
+        var suffix = slot == PromptSlot.Outgoing ? "outgoing" : "response";
+        return $"{tool}-{signal}-{suffix}.md";
+    }
+
+    private static string SanitizeSegment(string input) =>
+        System.Text.RegularExpressions.Regex.Replace(input, "[^a-zA-Z0-9_-]", "-").Trim('-').ToLowerInvariant();
+
+    private static string NormalizeFile(string file)
+    {
+        var normalized = file.Replace('\\', '/').TrimStart('/');
+        if (normalized.StartsWith("./", StringComparison.Ordinal))
+            normalized = normalized.Substring(2);
+        if (normalized.StartsWith("prompts/", StringComparison.OrdinalIgnoreCase))
+            normalized = normalized.Substring("prompts/".Length);
+        return normalized;
+    }
+
+    private List<string> FindUnknownPlaceholders(SignalingToolEntry entry, string? file)
+    {
+        var content = GetLoadedContent(file);
+        if (string.IsNullOrEmpty(content)) return new List<string>();
+
+        var knownUpper = entry.Parameters.Keys
+            .Select(ToPlaceholder)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var pattern = new System.Text.RegularExpressions.Regex(
+            @"\{\{(?:#(?:if|each)\s+)?([A-Z_][A-Z_0-9]*)\}\}",
+            System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        return pattern.Matches(content)
+            .Cast<System.Text.RegularExpressions.Match>()
+            .Select(m => m.Groups[1].Value)
+            .Distinct(StringComparer.Ordinal)
+            .Where(p => !knownUpper.Contains(p))
+            .OrderBy(p => p, StringComparer.Ordinal)
+            .ToList();
+    }
+
+    private static string ToPlaceholder(string camelCase)
+    {
+        var sb = new System.Text.StringBuilder();
+        for (int i = 0; i < camelCase.Length; i++)
+        {
+            var c = camelCase[i];
+            if (char.IsUpper(c) && i > 0) sb.Append('_');
+            sb.Append(char.ToUpperInvariant(c));
+        }
+        return sb.ToString();
+    }
+
+    private static string FormatPlaceholderHints(SignalingToolEntry entry)
+    {
+        if (entry.Parameters.Count == 0) return "none";
+        return string.Join(", ", entry.Parameters.Keys.Select(p => $"{{{{{ToPlaceholder(p)}}}}}"));
     }
 
     private Dictionary<string, ParameterDefinition> GetOrCreateResponseParameters(SignalingToolEntry entry)

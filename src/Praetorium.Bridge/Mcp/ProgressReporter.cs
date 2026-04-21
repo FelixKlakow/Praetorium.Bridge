@@ -1,34 +1,45 @@
 using System;
 using System.Threading;
+using ModelContextProtocol;
 
 namespace Praetorium.Bridge.Mcp;
 
 /// <summary>
-/// Reports progress or keepalive signals during long-running agent operations.
+/// Emits periodic <see cref="ProgressNotificationValue"/> keepalives to an
+/// <see cref="IProgress{T}"/> while one side of the bridge is blocked waiting on the
+/// other. Used both by the dispatcher (external caller blocked while the agent works)
+/// and by blocking signaling tools (agent blocked while the external caller works).
 /// </summary>
-public class ProgressReporter : IDisposable
+public sealed class ProgressReporter : IDisposable
 {
-    private Timer? _timer;
+    private readonly IProgress<ProgressNotificationValue> _progress;
     private readonly TimeSpan _interval;
-    private readonly Action _onKeepAlive;
+    private readonly string? _message;
+    private Timer? _timer;
+    private int _tick;
     private bool _disposed;
 
     /// <summary>
     /// Initializes a new instance of the ProgressReporter class.
     /// </summary>
-    /// <param name="interval">The interval at which to send keepalive signals.</param>
-    /// <param name="onKeepAlive">Callback action to invoke on each keepalive interval.</param>
-    public ProgressReporter(TimeSpan interval, Action onKeepAlive)
+    /// <param name="progress">The sink that receives each keepalive notification.</param>
+    /// <param name="interval">The interval at which keepalives are emitted. Must be positive.</param>
+    /// <param name="message">Optional static message attached to each notification.</param>
+    public ProgressReporter(
+        IProgress<ProgressNotificationValue> progress,
+        TimeSpan interval,
+        string? message = null)
     {
         if (interval <= TimeSpan.Zero)
-            throw new ArgumentException("Interval must be positive", nameof(interval));
+            throw new ArgumentException("Interval must be positive.", nameof(interval));
 
+        _progress = progress ?? throw new ArgumentNullException(nameof(progress));
         _interval = interval;
-        _onKeepAlive = onKeepAlive ?? throw new ArgumentNullException(nameof(onKeepAlive));
+        _message = message;
     }
 
     /// <summary>
-    /// Starts the progress reporter, emitting keepalive signals at the configured interval.
+    /// Starts the reporter. Subsequent calls are no-ops.
     /// </summary>
     public void Start()
     {
@@ -38,15 +49,11 @@ public class ProgressReporter : IDisposable
         if (_timer != null)
             return;
 
-        _timer = new Timer(
-            _ => _onKeepAlive(),
-            null,
-            _interval,
-            _interval);
+        _timer = new Timer(OnTick, null, _interval, _interval);
     }
 
     /// <summary>
-    /// Stops the progress reporter from emitting keepalive signals.
+    /// Stops the reporter. Safe to call multiple times.
     /// </summary>
     public void Stop()
     {
@@ -54,9 +61,7 @@ public class ProgressReporter : IDisposable
         _timer = null;
     }
 
-    /// <summary>
-    /// Disposes the progress reporter and releases its resources.
-    /// </summary>
+    /// <inheritdoc />
     public void Dispose()
     {
         if (_disposed)
@@ -65,4 +70,22 @@ public class ProgressReporter : IDisposable
         Stop();
         _disposed = true;
     }
+
+    private void OnTick(object? _)
+    {
+        try
+        {
+            var tick = Interlocked.Increment(ref _tick);
+            _progress.Report(new ProgressNotificationValue
+            {
+                Progress = tick,
+                Message = _message,
+            });
+        }
+        catch
+        {
+            // Progress reporting must never break the caller.
+        }
+    }
 }
+

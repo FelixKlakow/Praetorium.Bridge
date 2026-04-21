@@ -7,13 +7,20 @@
 
 <div class="tool-editor">
     <div class="editor-header">
-        <div>
+        <div class="editor-header-text">
             <h2>@ToolName</h2>
-            <p class="tool-description">@(Tool?.Description ?? "No description")</p>
+            @if (Tool != null)
+            {
+                <textarea class="tool-description-input"
+                          rows="4"
+                          placeholder="Describe what this tool does (shown to the LLM)…"
+                          @bind="Tool.Description"
+                          @bind:event="oninput"></textarea>
+            }
         </div>
-        <div class="header-actions">
-            <button class="delete-button" @onclick="ConfirmDelete" title="Delete tool">🗑️ Delete</button>
+        <div class="header-actions stacked">
             <button class="save-button" @onclick="SaveAsync">Save</button>
+            <button class="delete-button" @onclick="ConfirmDelete" title="Delete tool">Delete</button>
         </div>
     </div>
 
@@ -38,7 +45,7 @@
     <div class="editor-tabs">
         <div class="tab-group">
             <button class="tab @(activeTab == "parameters" ? "active" : "")" @onclick='() => SetActiveTabAsync("parameters")'>
-                Parameters
+                Parameters & Prompt
             </button>
             <button class="tab @(activeTab == "agent" ? "active" : "")" @onclick='() => SetActiveTabAsync("agent")'>
                 Agent Config
@@ -49,14 +56,11 @@
             <button class="tab @(activeTab == "signaling" ? "active" : "")" @onclick='() => SetActiveTabAsync("signaling")'>
                 Signaling
             </button>
-            <button class="tab @(activeTab == "prompts" ? "active" : "")" @onclick='() => SetActiveTabAsync("prompts")'>
-                Prompts
-            </button>
         </div>
     </div>
 
     <div class="tab-content">
-        @* ==================== PARAMETERS TAB ==================== *@
+        @* ==================== PARAMETERS + PROMPT TAB ==================== *@
         @if (activeTab == "parameters")
         {
             <div class="section">
@@ -150,6 +154,87 @@
                 {
                     <p class="empty-state">No parameters defined. Click "Add Parameter" to define input parameters for this tool.</p>
                 }
+            </div>
+
+            <div class="section prompt-section">
+                <div class="section-header">
+                    <h3>System Prompt</h3>
+                </div>
+                <p class="section-description">The prompt template sent to the agent. Reference parameters using <code>{{PLACEHOLDER_NAME}}</code>.</p>
+
+                <div class="form-group">
+                    <label>Prompt File:</label>
+                    <input type="text" value="@(Tool!.Agent!.PromptFile ?? string.Empty)"
+                           @onchange="OnPromptFilePathChangedAsync"
+                           class="form-input" placeholder="@DefaultPromptFilename()" />
+                    <p class="field-hint">Saved to the prompts directory. Leave blank to auto-generate from the tool name.</p>
+                </div>
+
+                <div class="prompt-editor-layout">
+                    <div class="prompt-main">
+                        <textarea class="form-textarea prompt-textarea" rows="18"
+                                  value="@promptContent"
+                                  @onchange="OnPromptContentChanged"
+                                  placeholder="# @ToolName&#10;&#10;You are an agent that ..."></textarea>
+
+                        @{
+                            var unknown = FindUnknownPlaceholders();
+                        }
+                        @if (unknown.Count > 0)
+                        {
+                            <div class="placeholder-warn">
+                                Unknown placeholder@(unknown.Count == 1 ? "" : "s"):
+                                @string.Join(", ", unknown.Select(p => $"{{{{{p}}}}}"))
+                            </div>
+                        }
+                    </div>
+
+                    <aside class="prompt-sidebar">
+                        <div class="sidebar-block">
+                            <div class="sidebar-title">Insert parameter</div>
+                            @if (AllPlaceholderSources().Count == 0)
+                            {
+                                <p class="sidebar-empty">Add a parameter above to insert it here.</p>
+                            }
+                            else
+                            {
+                                <div class="chip-list">
+                                    @foreach (var name in AllPlaceholderSources())
+                                    {
+                                        <button type="button" class="chip"
+                                                @onclick="() => InsertPlaceholder(name)"
+                                                title="Insert {{@(ToPlaceholder(name))}}">
+                                            @name
+                                        </button>
+                                    }
+                                </div>
+                            }
+                        </div>
+
+                        <div class="sidebar-block">
+                            <div class="sidebar-title">Detected placeholders</div>
+                            @{
+                                var detected = DetectedPlaceholders();
+                            }
+                            @if (detected.Count == 0)
+                            {
+                                <p class="sidebar-empty">None.</p>
+                            }
+                            else
+                            {
+                                <ul class="placeholder-list">
+                                    @foreach (var p in detected)
+                                    {
+                                        var known = IsKnownPlaceholder(p);
+                                        <li class="@(known ? "known" : "unknown")">
+                                            <code>{{@p}}</code>
+                                        </li>
+                                    }
+                                </ul>
+                            }
+                        </div>
+                    </aside>
+                </div>
             </div>
         }
 
@@ -325,43 +410,10 @@
         @* ==================== SIGNALING TAB ==================== *@
         @if (activeTab == "signaling")
         {
-            <SignalingToolsEditor Signaling="Tool!.Signaling!" AvailablePromptFiles="availablePromptFiles" />
-        }
-
-        @* ==================== PROMPTS TAB ==================== *@
-        @if (activeTab == "prompts")
-        {
-            <div class="section">
-                <h3>Prompt Configuration</h3>
-                <p class="section-description">Configure the system prompt that guides agent behavior for this tool.</p>
-
-                <div class="form-group">
-                    <label>Prompt File:</label>
-                    @if (availablePromptFiles.Count == 0)
-                    {
-                        <p class="field-hint field-hint-warn">No prompt files found. Create one in the Prompts page first.</p>
-                    }
-                    else
-                    {
-                        <div class="input-with-actions">
-                            <select value="@(Tool!.Agent!.PromptFile ?? string.Empty)"
-                                    @onchange="(e) => Tool.Agent.PromptFile = e.Value?.ToString()"
-                                    class="form-input">
-                                <option value="">-- Select a prompt file --</option>
-                                @foreach (var file in availablePromptFiles)
-                                {
-                                    <option value="@file">@file</option>
-                                }
-                            </select>
-                            @if (!string.IsNullOrEmpty(Tool.Agent.PromptFile))
-                            {
-                                <a href="@GeneratePromptLink(Tool.Agent.PromptFile)" class="action-link" target="_blank" title="Edit prompt file">📝 Edit</a>
-                            }
-                        </div>
-                    }
-                    <p class="field-hint">Markdown file containing the system prompt. Files live in the prompts directory.</p>
-                </div>
-            </div>
+            <SignalingToolsEditor @ref="signalingEditor"
+                                  Signaling="Tool!.Signaling!"
+                                  AvailablePromptFiles="availablePromptFiles"
+                                  ToolName="ToolName" />
         }
     </div>
 </div>
@@ -396,8 +448,16 @@
     private bool isLoadingCapabilities = false;
     private string? loadedCapabilitiesFor;
 
-    // Prompt files (drives the prompt-file dropdown)
+    // Prompt files (for the signaling editor)
     private List<string> availablePromptFiles = new();
+
+    // Inline system-prompt editor state
+    private string promptContent = string.Empty;
+    private string? loadedPromptFile;
+    private bool promptDirty;
+
+    // Signaling editor ref (for coordinated save)
+    private SignalingToolsEditor? signalingEditor;
 
     // Parameter form
     private bool showAddParameterForm = false;
@@ -411,18 +471,22 @@
     private bool showAddToolSourceForm = false;
     private string selectedToolSourceToAdd = "";
 
-    protected override void OnParametersSet()
+    private static readonly System.Text.RegularExpressions.Regex PlaceholderRegex =
+        new(@"\{\{(?:#(?:if|each)\s+)?([A-Z_][A-Z_0-9]*)\}\}",
+            System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    protected override async Task OnParametersSetAsync()
     {
         EnsureToolInitialized();
         availablePromptFiles = ConfigService.ListPromptFiles().ToList();
-        // If the tool is already in PerReference mode, make sure the managed parameter exists
         EnsureReferenceIdParameter();
+        await LoadPromptContentAsync();
     }
 
     private async Task SetActiveTabAsync(string tab)
     {
         activeTab = tab;
-        if (tab == "prompts")
+        if (tab == "signaling")
         {
             availablePromptFiles = ConfigService.ListPromptFiles().ToList();
         }
@@ -507,6 +571,122 @@
         Tool.Signaling.Tools ??= new List<SignalingToolEntry>();
     }
 
+    // ==================== SYSTEM PROMPT EDITOR ====================
+
+    private async Task LoadPromptContentAsync()
+    {
+        var file = Tool?.Agent?.PromptFile;
+        if (string.IsNullOrWhiteSpace(file))
+        {
+            promptContent = string.Empty;
+            loadedPromptFile = null;
+            promptDirty = false;
+            return;
+        }
+
+        if (loadedPromptFile == file && !promptDirty) return;
+
+        try
+        {
+            promptContent = await ConfigService.GetPromptContentAsync(file);
+            loadedPromptFile = file;
+            promptDirty = false;
+        }
+        catch
+        {
+            promptContent = string.Empty;
+            loadedPromptFile = file;
+            promptDirty = false;
+        }
+    }
+
+    private async Task OnPromptFilePathChangedAsync(ChangeEventArgs e)
+    {
+        var newPath = (e.Value?.ToString() ?? string.Empty).Trim();
+        Tool!.Agent!.PromptFile = string.IsNullOrEmpty(newPath) ? null : newPath;
+        await LoadPromptContentAsync();
+    }
+
+    private void OnPromptContentChanged(ChangeEventArgs e)
+    {
+        promptContent = e.Value?.ToString() ?? string.Empty;
+        promptDirty = true;
+    }
+
+    private string DefaultPromptFilename() =>
+        SanitizeSegment(string.IsNullOrWhiteSpace(ToolName) ? "tool" : ToolName) + ".md";
+
+    private static string SanitizeSegment(string input) =>
+        System.Text.RegularExpressions.Regex.Replace(input, "[^a-zA-Z0-9_-]", "-").Trim('-').ToLowerInvariant();
+
+    private List<string> AllPlaceholderSources()
+    {
+        var names = new List<string>();
+        if (Tool?.Parameters != null)
+            names.AddRange(Tool.Parameters.Keys);
+        if (Tool?.FixedParameters != null)
+            names.AddRange(Tool.FixedParameters.Keys.Where(k => !names.Contains(k)));
+        return names.OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    private List<string> DetectedPlaceholders()
+    {
+        if (string.IsNullOrEmpty(promptContent)) return new List<string>();
+        return PlaceholderRegex.Matches(promptContent)
+            .Cast<System.Text.RegularExpressions.Match>()
+            .Select(m => m.Groups[1].Value)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(p => p, StringComparer.Ordinal)
+            .ToList();
+    }
+
+    private bool IsKnownPlaceholder(string upperSnake)
+    {
+        var camel = FromPlaceholder(upperSnake);
+        return AllPlaceholderSources().Any(n => string.Equals(n, camel, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private List<string> FindUnknownPlaceholders() =>
+        DetectedPlaceholders().Where(p => !IsKnownPlaceholder(p)).ToList();
+
+    private void InsertPlaceholder(string paramName)
+    {
+        var token = "{{" + ToPlaceholder(paramName) + "}}";
+        promptContent = (promptContent ?? string.Empty) + token;
+        promptDirty = true;
+    }
+
+    private static string ToPlaceholder(string camelCase)
+    {
+        var sb = new System.Text.StringBuilder();
+        for (int i = 0; i < camelCase.Length; i++)
+        {
+            var c = camelCase[i];
+            if (char.IsUpper(c) && i > 0) sb.Append('_');
+            sb.Append(char.ToUpperInvariant(c));
+        }
+        return sb.ToString();
+    }
+
+    private static string FromPlaceholder(string upperSnake)
+    {
+        if (string.IsNullOrEmpty(upperSnake)) return upperSnake;
+        var parts = upperSnake.Split('_');
+        var sb = new System.Text.StringBuilder();
+        for (int i = 0; i < parts.Length; i++)
+        {
+            var part = parts[i];
+            if (part.Length == 0) continue;
+            if (i == 0) sb.Append(part.ToLowerInvariant());
+            else
+            {
+                sb.Append(char.ToUpperInvariant(part[0]));
+                if (part.Length > 1) sb.Append(part.Substring(1).ToLowerInvariant());
+            }
+        }
+        return sb.ToString();
+    }
+
     // ==================== REFERENCE ID PARAMETER MANAGEMENT ====================
 
     private bool IsReferenceIdParameter(string paramName)
@@ -530,7 +710,6 @@
 
         if (newName == oldName) return;
 
-        // Rename the managed parameter entry so it stays in sync
         if (!string.IsNullOrEmpty(oldName) && Tool.Parameters.TryGetValue(oldName, out var existing))
         {
             Tool.Parameters.Remove(oldName);
@@ -647,23 +826,35 @@
         Tool?.Agent?.Tools?.Remove(toolSource);
     }
 
-    // ==================== PROMPT METHODS ====================
-    private static string GeneratePromptLink(string fileName)
-    {
-        var normalized = fileName.Replace('\\', '/').TrimStart('/');
-        if (normalized.StartsWith("./", StringComparison.Ordinal))
-            normalized = normalized.Substring(2);
-        if (normalized.StartsWith("prompts/", StringComparison.OrdinalIgnoreCase))
-            normalized = normalized.Substring("prompts/".Length);
-        return $"/prompts/{Uri.EscapeDataString(normalized)}";
-    }
-
     // ==================== SAVE/DELETE METHODS ====================
     private async Task SaveAsync()
     {
         try
         {
+            // Persist the inline system prompt first.
+            if (promptDirty || (!string.IsNullOrEmpty(Tool?.Agent?.PromptFile) && Tool.Agent.PromptFile != loadedPromptFile))
+            {
+                var file = Tool?.Agent?.PromptFile;
+                if (string.IsNullOrWhiteSpace(file))
+                {
+                    file = DefaultPromptFilename();
+                    Tool!.Agent!.PromptFile = file;
+                }
+                await ConfigService.SavePromptContentAsync(file, promptContent ?? string.Empty);
+                loadedPromptFile = file;
+                promptDirty = false;
+            }
+
+            // Persist any inline-edited signaling prompts.
+            if (signalingEditor != null)
+            {
+                await signalingEditor.SavePendingPromptsAsync();
+            }
+
+            // Finally, save the JSON config.
             await OnSave.Invoke();
+
+            availablePromptFiles = ConfigService.ListPromptFiles().ToList();
             SaveStatus = "Saved successfully";
             await Task.Delay(2000);
             SaveStatus = "";

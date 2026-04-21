@@ -73,10 +73,15 @@ public static class PlaceholderEngine
         return template;
     }
 
+    // Placeholder variable names accept both camelCase (e.g. baseBranch) and
+    // UPPER_SNAKE_CASE (e.g. BASE_BRANCH). The first character must be a letter
+    // or underscore; subsequent characters may additionally include digits.
+    private const string VarNamePattern = @"[A-Za-z_][A-Za-z_0-9]*";
+
     private static string ProcessSimpleSubstitutions(string template, Dictionary<string, JsonElement> parameters)
     {
         // Pattern: {{NAME}} or {{ENV:VAR_NAME}}
-        var pattern = @"\{\{(?:ENV:([A-Z_0-9]+)|([A-Z_0-9]+))\}\}";
+        var pattern = @"\{\{(?:ENV:([A-Z_0-9]+)|(" + VarNamePattern + @"))\}\}";
         return Regex.Replace(template, pattern, match =>
         {
             string envVar = match.Groups[1].Value;
@@ -88,9 +93,7 @@ public static class PlaceholderEngine
                 return Environment.GetEnvironmentVariable(envVar) ?? string.Empty;
             }
 
-            // Find matching parameter by converting from UPPER_SNAKE_CASE back to camelCase
-            var camelCaseParam = ConvertFromPlaceholder(varName);
-            if (parameters.TryGetValue(camelCaseParam, out var value))
+            if (TryResolveParameter(parameters, varName, out var value))
             {
                 return JsonElementToString(value);
             }
@@ -103,14 +106,13 @@ public static class PlaceholderEngine
     private static string ProcessIfBlocks(string template, Dictionary<string, JsonElement> parameters)
     {
         // Pattern: {{#if NAME}}...{{/if}}
-        var pattern = @"\{\{#if\s+([A-Z_]+)\}\}(.*?)\{\{/if\}\}";
+        var pattern = @"\{\{#if\s+(" + VarNamePattern + @")\}\}(.*?)\{\{/if\}\}";
         return Regex.Replace(template, pattern, match =>
         {
             string varName = match.Groups[1].Value;
             string content = match.Groups[2].Value;
 
-            var camelCaseParam = ConvertFromPlaceholder(varName);
-            if (parameters.TryGetValue(camelCaseParam, out var value))
+            if (TryResolveParameter(parameters, varName, out var value))
             {
                 if (HasValue(value))
                 {
@@ -127,14 +129,13 @@ public static class PlaceholderEngine
     private static string ProcessEachBlocks(string template, Dictionary<string, JsonElement> parameters)
     {
         // Pattern: {{#each NAME}}...{{/each}}
-        var pattern = @"\{\{#each\s+([A-Z_]+)\}\}(.*?)\{\{/each\}\}";
+        var pattern = @"\{\{#each\s+(" + VarNamePattern + @")\}\}(.*?)\{\{/each\}\}";
         return Regex.Replace(template, pattern, match =>
         {
             string varName = match.Groups[1].Value;
             string content = match.Groups[2].Value;
 
-            var camelCaseParam = ConvertFromPlaceholder(varName);
-            if (parameters.TryGetValue(camelCaseParam, out var arrayValue))
+            if (TryResolveParameter(parameters, varName, out var arrayValue))
             {
                 if (arrayValue.ValueKind == JsonValueKind.Array)
                 {
@@ -182,6 +183,47 @@ public static class PlaceholderEngine
             JsonValueKind.Object => element.GetRawText(),
             _ => string.Empty
         };
+    }
+
+    /// <summary>
+    /// Resolves a placeholder variable name against the parameters dictionary.
+    /// Supports both camelCase placeholders (e.g. <c>baseBranch</c>) — matched
+    /// directly — and UPPER_SNAKE_CASE placeholders (e.g. <c>BASE_BRANCH</c>) —
+    /// matched by converting to camelCase.
+    /// </summary>
+    private static bool TryResolveParameter(
+        Dictionary<string, JsonElement> parameters,
+        string varName,
+        out JsonElement value)
+    {
+        // 1) Exact match (camelCase / PascalCase / caller-provided casing).
+        if (parameters.TryGetValue(varName, out value))
+            return true;
+
+        // 2) UPPER_SNAKE_CASE → camelCase match (backward compatibility).
+        if (IsUpperSnakeCase(varName))
+        {
+            var camel = ConvertFromPlaceholder(varName);
+            if (parameters.TryGetValue(camel, out value))
+                return true;
+        }
+
+        value = default;
+        return false;
+    }
+
+    private static bool IsUpperSnakeCase(string name)
+    {
+        if (string.IsNullOrEmpty(name))
+            return false;
+
+        for (int i = 0; i < name.Length; i++)
+        {
+            char c = name[i];
+            if (char.IsLower(c))
+                return false;
+        }
+        return true;
     }
 
     /// <summary>

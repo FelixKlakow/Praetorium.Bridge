@@ -4,7 +4,11 @@ using System.IO;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using ModelContextProtocol;
 using Praetorium.Bridge.Configuration;
+using Praetorium.Bridge.Mcp;
+using Praetorium.Bridge.Prompts;
+using Praetorium.Bridge.Tools;
 
 namespace Praetorium.Bridge.Signaling;
 
@@ -21,6 +25,7 @@ public static class SignalingToolFactory
     public const string MarkdownResponseFormat = "markdown";
 
     private static readonly TimeSpan DefaultSignalWaitTimeout = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan DefaultKeepaliveInterval = TimeSpan.FromSeconds(15);
 
     /// <summary>
     /// Creates a list of signaling tool definitions from the configuration.
@@ -28,7 +33,7 @@ public static class SignalingToolFactory
     /// <param name="sessionId">The unique identifier of the session these tools are for.</param>
     /// <param name="config">The signaling configuration.</param>
     /// <param name="signalRegistry">The signal registry the tools dispatch through.</param>
-    /// <param name="promptDirectory">Directory used to resolve markdown response prompt files.</param>
+    /// <param name="promptDirectory">Directory used to resolve markdown prompt files.</param>
     public static List<SignalingToolDefinition> CreateSignalingTools(
         string sessionId,
         SignalingConfiguration config,
@@ -47,10 +52,14 @@ public static class SignalingToolFactory
         if (string.IsNullOrEmpty(promptDirectory))
             throw new ArgumentException("Prompt directory is required.", nameof(promptDirectory));
 
+        var keepaliveInterval = config.KeepaliveIntervalSeconds > 0
+            ? TimeSpan.FromSeconds(config.KeepaliveIntervalSeconds)
+            : DefaultKeepaliveInterval;
+
         var tools = new List<SignalingToolDefinition>(config.Tools.Count);
         foreach (var entry in config.Tools)
         {
-            tools.Add(CreateTool(sessionId, entry, signalRegistry, promptDirectory));
+            tools.Add(CreateTool(sessionId, entry, signalRegistry, promptDirectory, keepaliveInterval));
         }
 
         return tools;
@@ -60,32 +69,36 @@ public static class SignalingToolFactory
         string sessionId,
         SignalingToolEntry entry,
         ISignalRegistry signalRegistry,
-        string promptDirectory)
+        string promptDirectory,
+        TimeSpan keepaliveInterval)
     {
         return entry.Name switch
         {
-            RespondToolName => CreateRespondTool(sessionId, entry, signalRegistry),
-            RequestInputToolName => CreateRequestInputTool(sessionId, entry, signalRegistry),
-            AwaitSignalToolName => CreateAwaitSignalTool(sessionId, entry, signalRegistry),
-            _ => CreateCustomTool(sessionId, entry, signalRegistry, promptDirectory),
+            RespondToolName => CreateRespondTool(sessionId, entry, signalRegistry, promptDirectory),
+            RequestInputToolName => CreateRequestInputTool(sessionId, entry, signalRegistry, promptDirectory, keepaliveInterval),
+            AwaitSignalToolName => CreateAwaitSignalTool(sessionId, entry, signalRegistry, keepaliveInterval),
+            _ => CreateCustomTool(sessionId, entry, signalRegistry, promptDirectory, keepaliveInterval),
         };
     }
 
     private static SignalingToolDefinition CreateRespondTool(
         string sessionId,
         SignalingToolEntry entry,
-        ISignalRegistry signalRegistry)
+        ISignalRegistry signalRegistry,
+        string promptDirectory)
     {
         var schema = ConvertParametersToSchema(entry.Parameters);
 
-        async Task<string> Handler(JsonElement parameters, CancellationToken ct)
+        Task<string> Handler(JsonElement parameters, IProgress<ProgressNotificationValue>? progress, CancellationToken ct)
         {
+            _ = progress; // respond is non-blocking; no keepalive needed.
+
             var message = parameters.TryGetProperty("message", out var msgProp)
                 ? msgProp.GetString()
                 : null;
 
             if (string.IsNullOrEmpty(message))
-                return "Error: 'message' parameter is required and must be a non-empty string.";
+                return Task.FromResult("Error: 'message' parameter is required and must be a non-empty string.");
 
             object? metadata = null;
             if (parameters.TryGetProperty("metadata", out var metaProp) && metaProp.ValueKind != JsonValueKind.Null)
@@ -93,8 +106,12 @@ public static class SignalingToolFactory
                 metadata = JsonSerializer.Deserialize<object>(metaProp.GetRawText());
             }
 
-            signalRegistry.Signal(sessionId, SignalResult.Input(new { message, metadata }));
-            return $"Response sent: {message}";
+            var outgoing = IsMarkdown(entry.OutgoingFormat)
+                ? ToolResponse.Complete(RenderMarkdown(promptDirectory, entry.OutgoingPromptFile, parameters))
+                : ToolResponse.Complete(message, metadata);
+
+            signalRegistry.SignalOutbound(sessionId, SignalResult.Input(outgoing));
+            return Task.FromResult($"Response sent: {message}");
         }
 
         return new SignalingToolDefinition(entry.Name, entry.Description, schema, Handler);
@@ -103,11 +120,13 @@ public static class SignalingToolFactory
     private static SignalingToolDefinition CreateRequestInputTool(
         string sessionId,
         SignalingToolEntry entry,
-        ISignalRegistry signalRegistry)
+        ISignalRegistry signalRegistry,
+        string promptDirectory,
+        TimeSpan keepaliveInterval)
     {
         var schema = ConvertParametersToSchema(entry.Parameters);
 
-        async Task<string> Handler(JsonElement parameters, CancellationToken ct)
+        async Task<string> Handler(JsonElement parameters, IProgress<ProgressNotificationValue>? progress, CancellationToken ct)
         {
             var question = parameters.TryGetProperty("question", out var qProp)
                 ? qProp.GetString()
@@ -127,13 +146,18 @@ public static class SignalingToolFactory
                 }
             }
 
-            signalRegistry.Signal(sessionId, SignalResult.Input(new { question, options }));
+            // Outgoing payload: structured input_requested, or markdown-rendered question.
+            var outgoing = IsMarkdown(entry.OutgoingFormat)
+                ? ToolResponse.Complete(RenderMarkdown(promptDirectory, entry.OutgoingPromptFile, parameters))
+                : ToolResponse.InputRequested(question, options);
 
-            var inputSignal = await signalRegistry
-                .WaitForSignalAsync(sessionId, DefaultSignalWaitTimeout, ct)
+            signalRegistry.SignalOutbound(sessionId, SignalResult.Input(outgoing));
+
+            var inputSignal = await WaitInboundWithKeepaliveAsync(
+                signalRegistry, sessionId, progress, keepaliveInterval, "waiting for caller input", ct)
                 .ConfigureAwait(false);
 
-            return FormatSignalResult(inputSignal);
+            return FormatBlockingResponse(entry, inputSignal, promptDirectory);
         }
 
         return new SignalingToolDefinition(entry.Name, entry.Description, schema, Handler);
@@ -142,14 +166,15 @@ public static class SignalingToolFactory
     private static SignalingToolDefinition CreateAwaitSignalTool(
         string sessionId,
         SignalingToolEntry entry,
-        ISignalRegistry signalRegistry)
+        ISignalRegistry signalRegistry,
+        TimeSpan keepaliveInterval)
     {
         var schema = ConvertParametersToSchema(entry.Parameters);
 
-        async Task<string> Handler(JsonElement parameters, CancellationToken ct)
+        async Task<string> Handler(JsonElement parameters, IProgress<ProgressNotificationValue>? progress, CancellationToken ct)
         {
-            var signal = await signalRegistry
-                .WaitForSignalAsync(sessionId, DefaultSignalWaitTimeout, ct)
+            var signal = await WaitInboundWithKeepaliveAsync(
+                signalRegistry, sessionId, progress, keepaliveInterval, "waiting for caller signal", ct)
                 .ConfigureAwait(false);
 
             return JsonSerializer.Serialize(new
@@ -166,36 +191,95 @@ public static class SignalingToolFactory
         string sessionId,
         SignalingToolEntry entry,
         ISignalRegistry signalRegistry,
-        string promptDirectory)
+        string promptDirectory,
+        TimeSpan keepaliveInterval)
     {
         var schema = ConvertParametersToSchema(entry.Parameters);
 
-        async Task<string> Handler(JsonElement parameters, CancellationToken ct)
+        async Task<string> Handler(JsonElement parameters, IProgress<ProgressNotificationValue>? progress, CancellationToken ct)
         {
-            signalRegistry.Signal(
-                sessionId,
-                SignalResult.Input(new { tool = entry.Name, parameters }));
+            // Outgoing payload to the external caller.
+            ToolResponse outgoing;
+            if (IsMarkdown(entry.OutgoingFormat))
+            {
+                outgoing = ToolResponse.Complete(RenderMarkdown(promptDirectory, entry.OutgoingPromptFile, parameters));
+            }
+            else
+            {
+                // JSON: hand the agent's raw parameters to the caller as metadata.
+                var packed = parameters.ValueKind == JsonValueKind.Undefined
+                    ? null
+                    : JsonSerializer.Deserialize<object>(parameters.GetRawText());
+                outgoing = ToolResponse.Complete(message: $"Signal '{entry.Name}' dispatched.", metadata: packed);
+            }
+
+            signalRegistry.SignalOutbound(sessionId, SignalResult.Input(outgoing));
 
             if (!entry.IsBlocking)
                 return $"Signal '{entry.Name}' dispatched.";
 
-            var signal = await signalRegistry
-                .WaitForSignalAsync(sessionId, DefaultSignalWaitTimeout, ct)
+            var signal = await WaitInboundWithKeepaliveAsync(
+                signalRegistry, sessionId, progress, keepaliveInterval, $"waiting for '{entry.Name}' response", ct)
                 .ConfigureAwait(false);
 
-            if (signal.Type == SignalType.Timeout)
-                return $"Error: timed out waiting for '{entry.Name}' response.";
-            if (signal.Type == SignalType.Disconnect)
-                return "Error: Caller disconnected.";
-
-            return entry.ResponseFormat switch
-            {
-                MarkdownResponseFormat => LoadMarkdownResponse(promptDirectory, entry.ResponsePromptFile),
-                _ => FormatSignalResult(signal),
-            };
+            return FormatBlockingResponse(entry, signal, promptDirectory);
         }
 
         return new SignalingToolDefinition(entry.Name, entry.Description, schema, Handler);
+    }
+
+    /// <summary>
+    /// Awaits the next inbound signal for a session while emitting periodic keepalive progress
+    /// notifications so the agent-side caller knows the external side is still engaged.
+    /// </summary>
+    private static async Task<SignalResult> WaitInboundWithKeepaliveAsync(
+        ISignalRegistry signalRegistry,
+        string sessionId,
+        IProgress<ProgressNotificationValue>? progress,
+        TimeSpan keepaliveInterval,
+        string keepaliveMessage,
+        CancellationToken ct)
+    {
+        if (progress == null)
+        {
+            return await signalRegistry
+                .WaitInboundAsync(sessionId, DefaultSignalWaitTimeout, ct)
+                .ConfigureAwait(false);
+        }
+
+        using var reporter = new ProgressReporter(progress, keepaliveInterval, keepaliveMessage);
+        reporter.Start();
+        try
+        {
+            return await signalRegistry
+                .WaitInboundAsync(sessionId, DefaultSignalWaitTimeout, ct)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            reporter.Stop();
+        }
+    }
+
+    /// <summary>
+    /// Formats a signal received by a blocking signaling tool into the string handed back
+    /// to the agent — governed by <see cref="SignalingToolEntry.ResponseFormat"/>.
+    /// </summary>
+    private static string FormatBlockingResponse(
+        SignalingToolEntry entry,
+        SignalResult signal,
+        string promptDirectory)
+    {
+        if (signal.Type == SignalType.Timeout)
+            return $"Error: timed out waiting for '{entry.Name}' response.";
+        if (signal.Type == SignalType.Disconnect)
+            return "Error: Caller disconnected.";
+        if (signal.Type == SignalType.Reset)
+            return "Error: Session reset.";
+
+        return IsMarkdown(entry.ResponseFormat)
+            ? LoadMarkdownResponse(promptDirectory, entry.ResponsePromptFile)
+            : FormatSignalResult(signal);
     }
 
     private static string FormatSignalResult(SignalResult signal)
@@ -210,12 +294,55 @@ public static class SignalingToolFactory
         };
     }
 
+    private static bool IsMarkdown(string? format) =>
+        string.Equals(format, MarkdownResponseFormat, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Renders a markdown prompt file using the agent-supplied parameters as placeholder vars.
+    /// Used for the outgoing (to external caller) payload.
+    /// </summary>
+    private static string RenderMarkdown(string promptDirectory, string? promptFile, JsonElement parameters)
+    {
+        if (string.IsNullOrWhiteSpace(promptFile))
+            throw new InvalidOperationException(
+                "Signaling tool is configured with markdown outgoing format but no outgoingPromptFile is set.");
+
+        var fullPath = ResolvePromptPath(promptDirectory, promptFile);
+        if (!File.Exists(fullPath))
+            throw new FileNotFoundException($"Outgoing prompt file '{promptFile}' does not exist.", fullPath);
+
+        var template = File.ReadAllText(fullPath);
+
+        var vars = new Dictionary<string, JsonElement>();
+        if (parameters.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var prop in parameters.EnumerateObject())
+                vars[prop.Name] = prop.Value.Clone();
+        }
+
+        return PlaceholderEngine.Render(template, vars);
+    }
+
+    /// <summary>
+    /// Loads a markdown response file verbatim (no templating) and returns it to the agent
+    /// as the blocking response payload.
+    /// </summary>
     private static string LoadMarkdownResponse(string promptDirectory, string? promptFile)
     {
         if (string.IsNullOrWhiteSpace(promptFile))
             throw new InvalidOperationException(
                 "Signaling tool is configured with markdown response format but no responsePromptFile is set.");
 
+        var fullPath = ResolvePromptPath(promptDirectory, promptFile);
+
+        if (!File.Exists(fullPath))
+            throw new FileNotFoundException($"Response prompt file '{promptFile}' does not exist.", fullPath);
+
+        return File.ReadAllText(fullPath);
+    }
+
+    private static string ResolvePromptPath(string promptDirectory, string promptFile)
+    {
         var normalized = promptFile.Replace('\\', '/').TrimStart('/');
         if (normalized.StartsWith("./", StringComparison.Ordinal))
             normalized = normalized.Substring(2);
@@ -226,12 +353,9 @@ public static class SignalingToolFactory
         var boundary = Path.GetFullPath(promptDirectory) + Path.DirectorySeparatorChar;
         if (!fullPath.StartsWith(boundary, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException(
-                $"Response prompt path '{promptFile}' resolves outside the prompts directory.");
+                $"Prompt path '{promptFile}' resolves outside the prompts directory.");
 
-        if (!File.Exists(fullPath))
-            throw new FileNotFoundException($"Response prompt file '{promptFile}' does not exist.", fullPath);
-
-        return File.ReadAllText(fullPath);
+        return fullPath;
     }
 
     private static JsonElement ConvertParametersToSchema(Dictionary<string, ParameterDefinition> parameters)

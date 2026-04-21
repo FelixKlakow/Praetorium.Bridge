@@ -122,4 +122,36 @@ public interface ISessionManager
         List<AgentToolSource> toolSources,
         List<SignalingToolDefinition> signalingTools,
         CancellationToken ct);
+
+    /// <summary>
+    /// Registers the <see cref="IAgentSession.SendAsync"/> task representing the currently
+    /// running agent turn for a session. The dispatcher uses this to race outbound signals
+    /// against turn completion so it never blocks on an agent that is itself parked inside
+    /// a blocking signaling tool.
+    /// </summary>
+    /// <param name="sessionId">The session the turn belongs to.</param>
+    /// <param name="turnTask">The task returned by <see cref="IAgentSession.SendAsync"/>.</param>
+    void SetRunningTurn(string sessionId, Task<string> turnTask);
+
+    /// <summary>
+    /// Gets the currently running agent turn task for a session, or <c>null</c> when no
+    /// turn is tracked. The task may already be completed — callers must check
+    /// <see cref="Task.IsCompleted"/> before reusing it as an in-flight turn.
+    /// </summary>
+    Task<string>? GetRunningTurn(string sessionId);
+
+    /// <summary>
+    /// Clears the running turn tracking for a session. Called when the turn has been
+    /// fully consumed or the session is torn down.
+    /// </summary>
+    void ClearRunningTurn(string sessionId);
+
+    /// <summary>
+    /// Releases any in-flight signaling waiters for the session by delivering a
+    /// <see cref="SignalType.Reset"/> on both channels. Used by the dashboard to
+    /// manually unstick an agent that is parked inside a blocking signaling tool
+    /// or a dispatcher parked on the outbound channel. Returns <c>true</c> if the
+    /// session exists and cancellation was issued.
+    /// </summary>
+    Task<bool> CancelSessionWaitsAsync(string sessionId, CancellationToken ct);
 }

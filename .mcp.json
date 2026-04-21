@@ -1,0 +1,10 @@
+{
+  "inputs": [],
+  "servers": {
+    "bridge": {
+      "type": "http",
+      "url": "http://localhost:5067/mcp",
+      "headers": {}
+    }
+  }
+}

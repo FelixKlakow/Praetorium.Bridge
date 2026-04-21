@@ -29,6 +29,20 @@ public class DashboardBridgeHooks : IBridgeHooks
     public event Func<Task>? ConfigReloaded;
 
     /// <summary>
+    /// Raised when a session is spawned. Fires after the bridge's own spawn
+    /// hook so the active agent is retrievable via <c>ISessionManager.GetActiveAgent</c>.
+    /// Used by <see cref="SessionActivityService"/> to attach per-session observers.
+    /// </summary>
+    public event Func<SessionContext, Task>? SessionSpawned;
+
+    /// <summary>
+    /// Raised after any hook that carries a <c>SessionId</c>, projected into a
+    /// flat <see cref="SessionLifecycleEntry"/>. Subscribed by
+    /// <see cref="SessionActivityService"/> to drive the per-session dashboard view.
+    /// </summary>
+    public event Action<SessionLifecycleEntry>? SessionLifecycle;
+
+    /// <summary>
     /// Initializes a new instance of the DashboardBridgeHooks class.
     /// </summary>
     /// <param name="hubContext">The SignalR hub context for broadcasting updates.</param>
@@ -109,7 +123,50 @@ public class DashboardBridgeHooks : IBridgeHooks
             $"Session ID: {context.SessionId}");
 
         AddLogEntry(logEntry);
+        RaiseSessionLifecycle(context.SessionId, "Spawned", context.ToolName, $"Reference: {context.ReferenceId ?? "-"}");
+
+        if (!string.IsNullOrWhiteSpace(context.Prompt))
+        {
+            RaiseSessionLifecycle(context.SessionId, "Prompt", context.ToolName, context.Prompt);
+        }
+
         await RaiseActivityLoggedAsync(logEntry, ct);
+        await RaiseSessionSpawnedAsync(context);
+    }
+
+    private async Task RaiseSessionSpawnedAsync(SessionContext context)
+    {
+        var handler = SessionSpawned;
+        if (handler is null)
+            return;
+
+        foreach (Func<SessionContext, Task> subscriber in handler.GetInvocationList().Cast<Func<SessionContext, Task>>())
+        {
+            try
+            {
+                await subscriber(context);
+            }
+            catch
+            {
+                // Do not let a single subscriber break the hook pipeline.
+            }
+        }
+    }
+
+    private void RaiseSessionLifecycle(string sessionId, string kind, string? toolName, string? details)
+    {
+        var handler = SessionLifecycle;
+        if (handler is null) return;
+
+        var entry = new SessionLifecycleEntry(
+            DateTimeOffset.UtcNow,
+            sessionId,
+            kind,
+            toolName,
+            details);
+
+        try { handler(entry); }
+        catch { /* observers must not break the hook pipeline */ }
     }
 
     /// <summary>
@@ -125,6 +182,7 @@ public class DashboardBridgeHooks : IBridgeHooks
             $"Session ID: {context.SessionId}");
 
         AddLogEntry(logEntry);
+        RaiseSessionLifecycle(context.SessionId, "Pooled", context.ToolName, null);
         await RaiseActivityLoggedAsync(logEntry, ct);
     }
 
@@ -141,6 +199,7 @@ public class DashboardBridgeHooks : IBridgeHooks
             $"Session ID: {context.SessionId}");
 
         AddLogEntry(logEntry);
+        RaiseSessionLifecycle(context.SessionId, "Woken", context.ToolName, null);
         await RaiseActivityLoggedAsync(logEntry, ct);
     }
 
@@ -157,6 +216,7 @@ public class DashboardBridgeHooks : IBridgeHooks
             $"Reason: {context.Reason}");
 
         AddLogEntry(logEntry);
+        RaiseSessionLifecycle(context.SessionId, "Dropped", context.ToolName, $"Reason: {context.Reason}");
         await RaiseActivityLoggedAsync(logEntry, ct);
     }
 
@@ -173,6 +233,7 @@ public class DashboardBridgeHooks : IBridgeHooks
             context.Exception.Message);
 
         AddLogEntry(logEntry);
+        RaiseSessionLifecycle(context.SessionId, "Crashed", context.ToolName, context.Exception.Message);
         await RaiseActivityLoggedAsync(logEntry, ct);
     }
 
@@ -189,6 +250,7 @@ public class DashboardBridgeHooks : IBridgeHooks
             $"Duration: {context.DurationMs}ms, Message: {context.Message}");
 
         AddLogEntry(logEntry);
+        RaiseSessionLifecycle(context.SessionId, "Response Delivered", context.ToolName, $"{context.DurationMs}ms: {context.Message}");
         await RaiseActivityLoggedAsync(logEntry, ct);
     }
 
@@ -205,6 +267,7 @@ public class DashboardBridgeHooks : IBridgeHooks
             context.Question);
 
         AddLogEntry(logEntry);
+        RaiseSessionLifecycle(context.SessionId, "Input Requested", context.ToolName, context.Question);
         await RaiseActivityLoggedAsync(logEntry, ct);
     }
 
@@ -221,6 +284,7 @@ public class DashboardBridgeHooks : IBridgeHooks
             $"Input: {context.Input}");
 
         AddLogEntry(logEntry);
+        RaiseSessionLifecycle(context.SessionId, "Input Received", context.ToolName, context.Input);
         await RaiseActivityLoggedAsync(logEntry, ct);
     }
 

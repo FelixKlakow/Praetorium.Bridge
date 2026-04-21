@@ -125,6 +125,12 @@
       }
     }
   },
+  "configAgent": {
+    "provider": "github-copilot",
+    "model": "claude-sonnet-4",
+    "reasoningEffort": "medium",
+    "promptFile": "./prompts/config-agent.md"
+  },
   "agentToolSources": {
     "filesystem": {
       "type": "stdio",

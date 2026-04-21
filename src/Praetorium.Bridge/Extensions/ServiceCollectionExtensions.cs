@@ -20,27 +20,32 @@ public static class ServiceCollectionExtensions
     /// Registers all core Praetorium.Bridge services in the dependency injection container.
     /// </summary>
     /// <param name="services">The service collection to register services in.</param>
-    /// <param name="configFilePath">The path to the bridge configuration JSON file. Defaults to "praetorium-bridge.json".</param>
+    /// <param name="configFilePath">The path to the bridge configuration JSON file. Defaults to <see cref="BridgePaths.DefaultConfigFilePath"/>.</param>
     /// <param name="configure">Optional callback to configure bridge options such as hooks.</param>
     /// <returns>The service collection for fluent configuration.</returns>
     public static IServiceCollection AddPraetoriumBridge(
         this IServiceCollection services,
-        string configFilePath = "praetorium-bridge.json",
+        string? configFilePath = null,
         Action<BridgeOptions>? configure = null)
     {
         if (services == null)
             throw new ArgumentNullException(nameof(services));
 
-        if (string.IsNullOrEmpty(configFilePath))
-            throw new ArgumentException("Config file path cannot be null or empty.", nameof(configFilePath));
-
         // Create and configure bridge options
-        var options = new BridgeOptions { ConfigFilePath = configFilePath };
+        var options = new BridgeOptions();
+        if (!string.IsNullOrEmpty(configFilePath))
+            options.ConfigFilePath = configFilePath;
         configure?.Invoke(options);
+
+        if (string.IsNullOrEmpty(options.ConfigFilePath))
+            throw new ArgumentException("Config file path cannot be null or empty.");
+
+        // Ensure the AppData directories exist before accessing configuration
+        BridgePaths.EnsureDirectoriesExist();
 
         // Register configuration provider as singleton
         services.AddSingleton<IConfigurationProvider>(sp =>
-            new JsonConfigurationProvider(configFilePath));
+            new JsonConfigurationProvider(options.ConfigFilePath));
 
         // Register signal registry as singleton
         services.AddSingleton<ISignalRegistry, SignalRegistry>();
@@ -57,7 +62,7 @@ public static class ServiceCollectionExtensions
         services.AddTransient<ToolParameterBinder>();
 
         // Register prompt resolver as singleton
-        var configDir = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(configFilePath)) ?? ".";
+        var configDir = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(options.ConfigFilePath)) ?? ".";
         services.AddSingleton<IPromptResolver>(sp =>
             new PromptResolver(configDir));
 
@@ -112,8 +117,9 @@ public class BridgeOptions
 {
     /// <summary>
     /// Gets or sets the path to the bridge configuration JSON file.
+    /// Defaults to <see cref="Configuration.BridgePaths.DefaultConfigFilePath"/>.
     /// </summary>
-    public string ConfigFilePath { get; set; } = "praetorium-bridge.json";
+    public string ConfigFilePath { get; set; } = Configuration.BridgePaths.DefaultConfigFilePath;
 
     /// <summary>
     /// Gets or sets the optional callback to configure bridge hooks.

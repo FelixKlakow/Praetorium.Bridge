@@ -75,4 +75,20 @@ public class SignalingToolEntry
     /// </summary>
     [JsonPropertyName("responsePromptFile")]
     public string? ResponsePromptFile { get; set; }
+
+    /// <summary>
+    /// Format of the payload sent from the agent *out* to the external caller when this
+    /// signaling tool fires. "json" (default) delivers the agent's structured parameters;
+    /// "markdown" renders <see cref="OutgoingPromptFile"/> with the agent's parameters as
+    /// template variables.
+    /// </summary>
+    [JsonPropertyName("outgoingFormat")]
+    public string? OutgoingFormat { get; set; }
+
+    /// <summary>
+    /// When <see cref="OutgoingFormat"/> is "markdown", the prompt template file whose
+    /// contents are returned to the external caller as the outgoing payload.
+    /// </summary>
+    [JsonPropertyName("outgoingPromptFile")]
+    public string? OutgoingPromptFile { get; set; }
 }

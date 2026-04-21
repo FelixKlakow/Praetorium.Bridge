@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 using GitHub.Copilot.SDK;
 using Microsoft.Extensions.Logging;
 using Praetorium.Bridge.Agents;
+using Praetorium.Bridge.CopilotProvider.InternalMcp;
 
 namespace Praetorium.Bridge.CopilotProvider;
 
@@ -23,7 +25,7 @@ public class CopilotProviderOptions
     /// <summary>
     /// Gets or sets the default model to use.
     /// </summary>
-    public string DefaultModel { get; set; } = "claude-sonnet-4-6";
+    public string DefaultModel { get; set; } = "claude-sonnet-4.6";
 
     /// <summary>
     /// Gets or sets the default instructions for agents.
@@ -42,17 +44,28 @@ public class CopilotAgentProvider : IAgentProvider
     private readonly ConcurrentDictionary<string, AgentCapabilities> _capabilitiesCache = new();
     private readonly ConcurrentDictionary<string, ModelInfo> _sdkModelCache = new();
     private readonly CopilotClient _copilotClient;
+    private readonly IInternalMcpRegistry _internalMcpRegistry;
+    private readonly InternalMcpEndpoint _internalMcpEndpoint;
 
     /// <summary>
     /// Initializes a new instance of the CopilotAgentProvider class.
     /// </summary>
     /// <param name="options">Configuration options for the provider.</param>
     /// <param name="copilotClient">The shared CopilotClient instance (managed by DI).</param>
+    /// <param name="internalMcpRegistry">Registry binding loopback session keys to signaling tools.</param>
+    /// <param name="internalMcpEndpoint">Loopback-only MCP endpoint description.</param>
     /// <param name="logger">The logger for diagnostic output.</param>
-    public CopilotAgentProvider(CopilotProviderOptions options, CopilotClient copilotClient, ILogger<CopilotAgentProvider> logger)
+    public CopilotAgentProvider(
+        CopilotProviderOptions options,
+        CopilotClient copilotClient,
+        IInternalMcpRegistry internalMcpRegistry,
+        InternalMcpEndpoint internalMcpEndpoint,
+        ILogger<CopilotAgentProvider> logger)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _copilotClient = copilotClient ?? throw new ArgumentNullException(nameof(copilotClient));
+        _internalMcpRegistry = internalMcpRegistry ?? throw new ArgumentNullException(nameof(internalMcpRegistry));
+        _internalMcpEndpoint = internalMcpEndpoint ?? throw new ArgumentNullException(nameof(internalMcpEndpoint));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -86,6 +99,17 @@ public class CopilotAgentProvider : IAgentProvider
             }
         }
 
+        var signalingTools = context.SignalingTools;
+
+        // Route agent-side tool invocations through a loopback MCP server so the
+        // Copilot SDK's built-in MCP client handles ProgressToken keepalives for
+        // long-running signaling tools. The session key is random opaque state
+        // so even another process on the loopback interface cannot guess it, and
+        // a second random bearer token gates the request regardless.
+        var sessionKey = RandomNumberGenerator.GetHexString(32, lowercase: true);
+        var bearerToken = RandomNumberGenerator.GetHexString(64, lowercase: true);
+        _internalMcpRegistry.Register(sessionKey, new InternalMcpRegistryEntry(signalingTools, bearerToken));
+
         var sessionConfig = new SessionConfig
         {
             Model = model,
@@ -94,7 +118,21 @@ public class CopilotAgentProvider : IAgentProvider
                 Mode = SystemMessageMode.Append,
                 Content = context.Prompt
             },
-            OnPermissionRequest = PermissionHandler.ApproveAll
+            OnPermissionRequest = PermissionHandler.ApproveAll,
+            McpServers = new Dictionary<string, object>
+            {
+                ["praetorium-internal"] = new McpRemoteServerConfig
+                {
+                    Url = _internalMcpEndpoint.Url,
+                    Type = "http",
+                    Tools = ["*"],
+                    Headers = new Dictionary<string, string>
+                    {
+                        ["Authorization"] = $"Bearer {bearerToken}",
+                        [InternalMcpEndpoint.SessionHeaderName] = sessionKey
+                    }
+                }
+            }
         };
 
         if (!string.IsNullOrEmpty(context.AgentConfiguration.ReasoningEffort))
@@ -102,13 +140,22 @@ public class CopilotAgentProvider : IAgentProvider
             sessionConfig.ReasoningEffort = context.AgentConfiguration.ReasoningEffort;
         }
 
-        var session = await _copilotClient.CreateSessionAsync(sessionConfig).ConfigureAwait(false);
+        CopilotSession session;
+        try
+        {
+            session = await _copilotClient.CreateSessionAsync(sessionConfig).ConfigureAwait(false);
+        }
+        catch
+        {
+            _internalMcpRegistry.Unregister(sessionKey);
+            throw;
+        }
 
         _logger.LogInformation(
             "[CopilotAgentProvider] Created session for tool '{ToolName}' with model '{Model}'",
             context.ToolName, model);
 
-        return new CopilotAgentSession(session);
+        return new CopilotAgentSession(session, _internalMcpRegistry, sessionKey);
     }
 
     /// <summary>

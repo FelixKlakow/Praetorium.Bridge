@@ -52,12 +52,13 @@ public class SessionContext : BridgeHookContext
     /// <param name="sessionId">Unique identifier for the session.</param>
     /// <param name="toolName">Name of the tool the session handles.</param>
     /// <param name="referenceId">Reference ID for session pooling, if applicable.</param>
-    public SessionContext(string correlationId, string sessionId, string toolName, string? referenceId = null)
+    public SessionContext(string correlationId, string sessionId, string toolName, string? referenceId = null, string? prompt = null)
         : base(correlationId)
     {
         SessionId = sessionId ?? throw new ArgumentNullException(nameof(sessionId));
         ToolName = toolName ?? throw new ArgumentNullException(nameof(toolName));
         ReferenceId = referenceId;
+        Prompt = prompt;
     }
 
     /// <summary>
@@ -74,6 +75,12 @@ public class SessionContext : BridgeHookContext
     /// Gets the reference ID for session pooling, if applicable.
     /// </summary>
     public string? ReferenceId { get; }
+
+    /// <summary>
+    /// Gets the resolved system prompt that was sent to the agent when this session was spawned.
+    /// Null for lifecycle events that do not involve a new agent (pool wake, drop, etc.).
+    /// </summary>
+    public string? Prompt { get; }
 }
 
 /// <summary>

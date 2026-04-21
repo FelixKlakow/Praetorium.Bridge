@@ -4,6 +4,9 @@
     <Project Path="src/Praetorium.Bridge.Web/Praetorium.Bridge.Web.csproj" />
     <Project Path="src/Praetorium.Bridge/Praetorium.Bridge.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Praetorium.Bridge.Tests/Praetorium.Bridge.Tests.csproj" />
+  </Folder>
   <Folder Name="/.github/">
     <File Path=".github/copilot-instructions.md" />
   </Folder>
@@ -11,3 +14,4 @@
     <File Path="praetorium-bridge-design.md" />
   </Folder>
 </Solution>
+
