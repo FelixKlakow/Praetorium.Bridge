@@ -154,6 +154,8 @@ public class ToolDispatcherSubscriptionRaceTests
                 _registry.SignalOutbound(sessionId, SignalResult.Input(ToolResponse.Complete("sync-hello")));
                 return Task.FromResult("turn-done");
             }
+
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
         }
     }
 }

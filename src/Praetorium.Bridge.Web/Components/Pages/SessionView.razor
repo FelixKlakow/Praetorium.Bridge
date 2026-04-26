@@ -20,7 +20,7 @@
             <label class="filter-label">
                 <input type="checkbox" @bind="autoFollow" /> Auto-scroll
             </label>
-            <button class="cancel-button" @onclick="RefreshSessionsAsync" disabled="@isLoading">Refresh</button>
+            <button class="save-button" @onclick="RefreshSessionsAsync" disabled="@isLoading">Refresh</button>
         </div>
     </div>
 
@@ -101,37 +101,83 @@
                 }
                 else
                 {
-                    @foreach (var entry in transcript)
+                    var toolPairs = BuildToolPairs(transcript);
+                    @for (int i = 0; i < transcript.Count; i++)
                     {
-                        <div class="transcript-entry @SourceClass(entry.Source) @EntryKindClass(entry)">
-                            <div class="entry-head">
-                                <span class="entry-source">@entry.Source</span>
-                                <span class="entry-kind">@entry.Kind</span>
-                                @if (!string.IsNullOrEmpty(entry.Title))
-                                {
-                                    <span class="entry-title">@entry.Title</span>
-                                }
-                                <span class="entry-time">@entry.Timestamp.ToLocalTime().ToString("HH:mm:ss.fff")</span>
-                            </div>
-                            @if (!string.IsNullOrEmpty(entry.Details))
-                            {
-                                @if (entry.Source == SessionTranscriptSource.Agent && entry.Kind == nameof(AgentActivityKind.AssistantMessage))
-                                {
-                                    <div class="entry-details entry-details--message">@entry.Details</div>
-                                }
-                                else if (entry.Source == SessionTranscriptSource.Lifecycle && entry.Kind == "Prompt")
-                                {
-                                    <details class="entry-prompt-wrapper">
-                                        <summary class="entry-prompt-summary">Show system prompt</summary>
-                                        <pre class="entry-details entry-details--prompt">@entry.Details</pre>
-                                    </details>
-                                }
-                                else
+                        if (toolPairs.SkipIndices.Contains(i)) { continue; }
+                        var entry = transcript[i];
+                        var isToolStart = entry.Source == SessionTranscriptSource.Agent
+                            && entry.Kind == nameof(AgentActivityKind.ToolStart);
+                        SessionTranscriptEntry? completeEntry = null;
+                        if (isToolStart && toolPairs.StartToComplete.TryGetValue(i, out var completeIdx))
+                        {
+                            completeEntry = transcript[completeIdx];
+                        }
+
+                        if (isToolStart)
+                        {
+                            var status = completeEntry is null
+                                ? "pending"
+                                : (completeEntry.Details?.Contains("success=False", StringComparison.Ordinal) == true
+                                    ? "error"
+                                    : "ok");
+                            <div class="transcript-entry agent tool-call tool-call--@status">
+                                <div class="entry-head">
+                                    <span class="entry-source">@entry.Source</span>
+                                    <span class="entry-kind">Tool</span>
+                                    @if (!string.IsNullOrEmpty(entry.Title))
+                                    {
+                                        <span class="entry-title">@entry.Title</span>
+                                    }
+                                    <span class="entry-time">@entry.Timestamp.ToLocalTime().ToString("HH:mm:ss.fff")</span>
+                                    <span class="tool-status tool-status--@status" title="@ToolStatusTitle(status, completeEntry)">
+                                        @ToolStatusIcon(status)
+                                    </span>
+                                </div>
+                                @if (!string.IsNullOrEmpty(entry.Details))
                                 {
                                     <pre class="entry-details">@entry.Details</pre>
                                 }
-                            }
-                        </div>
+                                @if (completeEntry is not null
+                                     && !string.IsNullOrEmpty(completeEntry.Details)
+                                     && status == "error")
+                                {
+                                    <pre class="entry-details entry-details--tool-error">@completeEntry.Details</pre>
+                                }
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="transcript-entry @SourceClass(entry.Source) @EntryKindClass(entry)">
+                                <div class="entry-head">
+                                    <span class="entry-source">@entry.Source</span>
+                                    <span class="entry-kind">@entry.Kind</span>
+                                    @if (!string.IsNullOrEmpty(entry.Title))
+                                    {
+                                        <span class="entry-title">@entry.Title</span>
+                                    }
+                                    <span class="entry-time">@entry.Timestamp.ToLocalTime().ToString("HH:mm:ss.fff")</span>
+                                </div>
+                                @if (!string.IsNullOrEmpty(entry.Details))
+                                {
+                                    @if (entry.Source == SessionTranscriptSource.Agent && entry.Kind == nameof(AgentActivityKind.AssistantMessage))
+                                    {
+                                        <div class="entry-details entry-details--message">@entry.Details</div>
+                                    }
+                                    else if (entry.Source == SessionTranscriptSource.Lifecycle && entry.Kind == "Prompt")
+                                    {
+                                        <details class="entry-prompt-wrapper">
+                                            <summary class="entry-prompt-summary">Show system prompt</summary>
+                                            <pre class="entry-details entry-details--prompt">@entry.Details</pre>
+                                        </details>
+                                    }
+                                    else
+                                    {
+                                        <pre class="entry-details">@entry.Details</pre>
+                                    }
+                                }
+                            </div>
+                        }
                     }
                 }
             </div>
@@ -269,6 +315,62 @@
         entry.Source == SessionTranscriptSource.Agent && entry.Kind == nameof(AgentActivityKind.AssistantMessage)
             ? "agent-message"
             : string.Empty;
+
+    private readonly record struct ToolPairing(
+        Dictionary<int, int> StartToComplete,
+        HashSet<int> SkipIndices);
+
+    /// <summary>
+    /// Builds a FIFO pairing between <see cref="AgentActivityKind.ToolStart"/> and
+    /// <see cref="AgentActivityKind.ToolComplete"/> transcript entries that share
+    /// the same tool name. Each ToolStart is paired with the next unmatched
+    /// ToolComplete for the same tool. Paired ToolComplete indices are returned
+    /// in <see cref="ToolPairing.SkipIndices"/> so the renderer collapses each
+    /// pair into a single visual row.
+    /// </summary>
+    private static ToolPairing BuildToolPairs(IReadOnlyList<SessionTranscriptEntry> entries)
+    {
+        var pairs = new Dictionary<int, int>();
+        var skip = new HashSet<int>();
+        for (int i = 0; i < entries.Count; i++)
+        {
+            var e = entries[i];
+            if (e.Source != SessionTranscriptSource.Agent
+                || e.Kind != nameof(AgentActivityKind.ToolStart))
+            {
+                continue;
+            }
+
+            for (int j = i + 1; j < entries.Count; j++)
+            {
+                if (skip.Contains(j)) { continue; }
+                var c = entries[j];
+                if (c.Source == SessionTranscriptSource.Agent
+                    && c.Kind == nameof(AgentActivityKind.ToolComplete)
+                    && string.Equals(c.Title, e.Title, StringComparison.Ordinal))
+                {
+                    pairs[i] = j;
+                    skip.Add(j);
+                    break;
+                }
+            }
+        }
+        return new ToolPairing(pairs, skip);
+    }
+
+    private static string ToolStatusIcon(string status) => status switch
+    {
+        "ok" => "✓",
+        "error" => "✕",
+        _ => "…",
+    };
+
+    private static string ToolStatusTitle(string status, SessionTranscriptEntry? complete) => status switch
+    {
+        "ok" => "Tool completed successfully",
+        "error" => complete?.Details ?? "Tool failed",
+        _ => "Tool running…",
+    };
 
     public void Dispose()
     {

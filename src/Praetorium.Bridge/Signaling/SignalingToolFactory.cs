@@ -198,11 +198,16 @@ public static class SignalingToolFactory
 
         async Task<string> Handler(JsonElement parameters, IProgress<ProgressNotificationValue>? progress, CancellationToken ct)
         {
-            // Outgoing payload to the external caller.
+            // Outgoing payload to the external caller. Non-blocking signaling tools emit
+            // 'partial' so the caller knows to re-invoke the tool to keep draining the
+            // agent's output; blocking tools emit 'complete' because the tool is about
+            // to park on the inbound waiter and the caller's reply is mandatory.
+            bool isBlocking = entry.IsBlocking;
             ToolResponse outgoing;
             if (IsMarkdown(entry.OutgoingFormat))
             {
-                outgoing = ToolResponse.Complete(RenderMarkdown(promptDirectory, entry.OutgoingPromptFile, parameters));
+                var text = RenderMarkdown(promptDirectory, entry.OutgoingPromptFile, parameters);
+                outgoing = isBlocking ? ToolResponse.Complete(text) : ToolResponse.Partial(text);
             }
             else
             {
@@ -210,12 +215,15 @@ public static class SignalingToolFactory
                 var packed = parameters.ValueKind == JsonValueKind.Undefined
                     ? null
                     : JsonSerializer.Deserialize<object>(parameters.GetRawText());
-                outgoing = ToolResponse.Complete(message: $"Signal '{entry.Name}' dispatched.", metadata: packed);
+                var message = $"Signal '{entry.Name}' dispatched.";
+                outgoing = isBlocking
+                    ? ToolResponse.Complete(message, packed)
+                    : ToolResponse.Partial(message, packed);
             }
 
             signalRegistry.SignalOutbound(sessionId, SignalResult.Input(outgoing));
 
-            if (!entry.IsBlocking)
+            if (!isBlocking)
                 return $"Signal '{entry.Name}' dispatched.";
 
             var signal = await WaitInboundWithKeepaliveAsync(

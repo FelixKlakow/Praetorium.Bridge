@@ -44,4 +44,11 @@ public class ToolDefinition
     /// </summary>
     [JsonPropertyName("signaling")]
     public SignalingConfiguration? Signaling { get; set; }
+
+    /// <summary>
+    /// Optional per-tool system prompt override. When null the default from
+    /// <see cref="DefaultsConfiguration.SystemPrompt"/> is used.
+    /// </summary>
+    [JsonPropertyName("systemPrompt")]
+    public SystemPromptConfiguration? SystemPrompt { get; set; }
 }

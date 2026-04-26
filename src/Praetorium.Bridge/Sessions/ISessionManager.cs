@@ -108,7 +108,7 @@ public interface ISessionManager
     /// </summary>
     /// <param name="sessionId">The session ID to create the agent for.</param>
     /// <param name="toolName">The tool name the agent is handling.</param>
-    /// <param name="prompt">The system prompt for the agent.</param>
+    /// <param name="systemPrompt">The static system prompt installed on the agent session (tool-calling conventions).</param>
     /// <param name="agentConfig">The agent configuration.</param>
     /// <param name="toolSources">The MCP tool sources for the agent.</param>
     /// <param name="signalingTools">The signaling tool definitions.</param>
@@ -117,7 +117,7 @@ public interface ISessionManager
     Task<IAgentSession> CreateAgentAsync(
         string sessionId,
         string toolName,
-        string prompt,
+        string systemPrompt,
         AgentConfiguration agentConfig,
         List<AgentToolSource> toolSources,
         List<SignalingToolDefinition> signalingTools,

@@ -72,6 +72,23 @@ public interface ISignalRegistry
     void RemoveSession(string sessionId);
 
     /// <summary>
+    /// Returns <c>true</c> when a blocking signaling tool is currently parked on
+    /// the session's inbound channel waiting for a caller reply. Used by the
+    /// dispatcher to distinguish a <c>Resume</c> dispatch (agent blocked, payload
+    /// expected) from a <c>Rejoin</c> dispatch (agent running, pure poll).
+    /// </summary>
+    bool HasPendingInboundWaiter(string sessionId);
+
+    /// <summary>
+    /// Returns <c>true</c> when at least one outbound signal is queued for the
+    /// session and no caller is currently waiting to consume it. Used by the
+    /// dispatcher to detect that more outbound signals are still pending after
+    /// dequeuing one — so a payload marked <c>complete</c> by the agent is
+    /// demoted to <c>partial</c> and the caller is told to keep draining.
+    /// </summary>
+    bool HasPendingOutbound(string sessionId);
+
+    /// <summary>
     /// Delivers a <see cref="SignalResult.Reset"/> on both channels for the
     /// given session so any in-flight waiter (an agent blocked inside a
     /// signaling tool, or a dispatcher blocked on the outbound channel) is

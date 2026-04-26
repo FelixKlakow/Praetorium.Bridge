@@ -1,0 +1,230 @@
+/* Mirrors the editor/tab layout from ToolEditor.razor.css. Blazor scoped CSS
+   does not leak across components, so the classes used by DefaultsEditor must
+   be redeclared here. Keep visually in sync with ToolEditor.razor.css. */
+
+.tool-editor {
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.editor-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 24px;
+    border-bottom: 1px solid var(--border-color, #e2e8f0);
+    padding-bottom: 16px;
+}
+
+.editor-header h2 {
+    margin: 0 0 6px 0;
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--text-primary, #0f172a);
+    letter-spacing: -0.2px;
+}
+
+.editor-header-text {
+    flex: 1;
+    min-width: 0;
+}
+
+.tool-description {
+    margin: 0;
+    color: var(--text-secondary, #475569);
+    font-size: 13px;
+}
+
+.header-actions {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+}
+
+.header-actions.stacked {
+    flex-direction: column;
+    gap: 8px;
+    align-items: stretch;
+    min-width: 96px;
+}
+
+.header-actions.stacked .save-button {
+    width: 100%;
+    text-align: center;
+    justify-content: center;
+}
+
+.status-message {
+    padding: 10px 14px;
+    border-radius: 4px;
+    margin-bottom: 16px;
+    font-size: 13px;
+    font-weight: 500;
+    border: 1px solid;
+}
+
+.status-message.success {
+    background: var(--color-success-bg, #d1fae5);
+    border-color: var(--color-success-border, #10b981);
+    color: var(--color-success-text, #065f46);
+}
+
+.status-message.error {
+    background: var(--color-error-bg, #fee2e2);
+    border-color: var(--color-error-border, #ef4444);
+    color: var(--color-error-text, #991b1b);
+}
+
+/* Tabs */
+.editor-tabs {
+    margin-bottom: 20px;
+}
+
+.tab-group {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid var(--border-color, #e2e8f0);
+    overflow-x: auto;
+}
+
+.tab {
+    padding: 10px 14px;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-tertiary, #94a3b8);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+    white-space: nowrap;
+    font-family: var(--font-sans, inherit);
+}
+
+.tab:hover {
+    color: var(--text-primary, #0f172a);
+}
+
+.tab.active {
+    color: var(--color-primary, #3b82f6);
+    border-bottom-color: var(--color-primary, #3b82f6);
+}
+
+.tab-content {
+    flex: 1;
+    overflow-y: auto;
+}
+
+.tab-content::-webkit-scrollbar {
+    width: 6px;
+}
+
+.tab-content::-webkit-scrollbar-track {
+    background: #f3f4f6;
+}
+
+.tab-content::-webkit-scrollbar-thumb {
+    background: #d1d5db;
+    border-radius: 3px;
+}
+
+/* Sections */
+.section {
+    margin-bottom: 32px;
+}
+
+.section h3 {
+    margin: 0 0 14px 0;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-tertiary, #94a3b8);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+}
+
+.section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.section-header h3 {
+    margin: 0;
+}
+
+.section-description {
+    color: var(--text-secondary, #475569);
+    font-size: 13px;
+    margin: -8px 0 16px 0;
+}
+
+/* Form controls */
+.form-group {
+    margin-bottom: 16px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 8px;
+    color: #374151;
+    font-size: 13px;
+    font-weight: 500;
+}
+
+.form-input,
+.form-textarea {
+    width: 100%;
+    background: var(--surface-card, #ffffff);
+    border: 1px solid var(--border-color, #e2e8f0);
+    border-radius: 4px;
+    padding: 8px 12px;
+    color: var(--text-primary, #0f172a);
+    font-size: 13px;
+    font-family: inherit;
+    box-sizing: border-box;
+}
+
+.form-input:focus,
+.form-textarea:focus {
+    outline: none;
+    border-color: var(--color-primary, #3b82f6);
+    box-shadow: 0 0 0 3px var(--color-primary-ring, rgba(59, 130, 246, 0.22));
+}
+
+.form-textarea {
+    resize: vertical;
+    font-family: 'Courier New', monospace;
+}
+
+.inline-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.inline-row .form-input {
+    flex: 1;
+}
+
+/* Hints */
+.field-hint {
+    margin: 6px 0 0 0;
+    font-size: 12px;
+    color: #6b7280;
+}
+
+.field-hint-warn {
+    color: #b45309;
+}
+
+.models-loading {
+    padding: 10px 12px;
+    background: #f3f4f6;
+    border: 1px solid #e5e7eb;
+    border-radius: 4px;
+    font-size: 13px;
+    color: #6b7280;
+}

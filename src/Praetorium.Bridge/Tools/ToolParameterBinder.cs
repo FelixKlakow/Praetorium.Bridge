@@ -11,13 +11,24 @@ namespace Praetorium.Bridge.Tools;
 public class ToolParameterBinder
 {
     /// <summary>
-    /// Binds parameters for a tool call, extracting reserved parameters and merging fixed parameters.
+    /// Binds parameters for a tool call, extracting reserved parameters and merging fixed
+    /// parameters. The required-parameter check is gated by <paramref name="phase"/>:
+    /// <list type="bullet">
+    ///   <item><description><see cref="TurnPhase.NewTurn"/> enforces required
+    ///   <see cref="ParameterKind.Prompt"/> parameters.</description></item>
+    ///   <item><description><see cref="TurnPhase.Resume"/> enforces required
+    ///   <see cref="ParameterKind.Resume"/> parameters.</description></item>
+    ///   <item><description><see cref="TurnPhase.Rejoin"/> enforces nothing — a rejoin is a
+    ///   pure "call me again to keep draining" from the caller's side.</description></item>
+    /// </list>
+    /// <see cref="ParameterKind.System"/> parameters are never caller-required.
     /// </summary>
     /// <param name="toolDefinition">The tool definition containing parameter metadata.</param>
     /// <param name="arguments">The JSON arguments provided in the MCP call.</param>
+    /// <param name="phase">The current turn phase governing required-parameter enforcement.</param>
     /// <returns>A ToolCallContext containing bound parameters and control signals.</returns>
     /// <exception cref="ArgumentException">Thrown when required parameters are missing or validation fails.</exception>
-    public ToolCallContext Bind(ToolDefinition toolDefinition, JsonElement arguments)
+    public ToolCallContext Bind(ToolDefinition toolDefinition, JsonElement arguments, TurnPhase phase = TurnPhase.NewTurn)
     {
         if (toolDefinition == null)
             throw new ArgumentNullException(nameof(toolDefinition));
@@ -85,7 +96,7 @@ public class ToolParameterBinder
             }
         }
 
-        // Validate required parameters
+        // Validate required parameters — gated by kind + phase.
         if (toolDefinition.Parameters != null)
         {
             foreach (var paramDef in toolDefinition.Parameters)
@@ -95,7 +106,13 @@ public class ToolParameterBinder
                 if (!string.IsNullOrEmpty(referenceIdParamName) && paramDef.Key == referenceIdParamName)
                     continue;
 
-                if (paramDef.Value.Required && !boundParameters.ContainsKey(paramDef.Key))
+                if (!paramDef.Value.Required)
+                    continue;
+
+                if (!IsRequiredInPhase(paramDef.Value.Kind, phase))
+                    continue;
+
+                if (!boundParameters.ContainsKey(paramDef.Key))
                 {
                     throw new ArgumentException(
                         $"Required parameter '{paramDef.Key}' is missing.",
@@ -106,4 +123,14 @@ public class ToolParameterBinder
 
         return new ToolCallContext(boundParameters, resetSession, input, referenceId, null);
     }
+
+    private static bool IsRequiredInPhase(ParameterKind kind, TurnPhase phase) =>
+        (kind, phase) switch
+        {
+            (ParameterKind.Prompt, TurnPhase.NewTurn) => true,
+            (ParameterKind.Resume, TurnPhase.Resume) => true,
+            // System parameters are bridge-controlled; Prompt in Resume/Rejoin
+            // and Resume in NewTurn/Rejoin are never enforced.
+            _ => false,
+        };
 }

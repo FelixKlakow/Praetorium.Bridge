@@ -124,7 +124,9 @@ public class ToolDispatcherTurnTests
 
         var response = await h.Dispatcher.DispatchAsync(ToolName, BuildArgs(), connectionId: null, progress: null, CancellationToken.None);
 
-        Assert.Equal("complete", response.Status);
+        // The turn is still alive (parked on inbound), so a 'complete' payload is
+        // demoted to 'partial' to tell the caller to re-invoke and keep draining.
+        Assert.Equal("partial", response.Status);
         Assert.Equal("hello", response.Message);
 
         var sessionId = await ResolveSessionIdAsync(h, CancellationToken.None);
@@ -209,7 +211,8 @@ public class ToolDispatcherTurnTests
 
         var response = await h.Dispatcher.DispatchAsync(ToolName, BuildArgs(), connectionId: null, progress, CancellationToken.None);
 
-        Assert.Equal("complete", response.Status);
+        // Agent parks after signaling → 'complete' is demoted to 'partial'.
+        Assert.Equal("partial", response.Status);
         Assert.Equal("done", response.Message);
         Assert.True(progressCount >= 0);
     }
@@ -338,8 +341,10 @@ public class ToolDispatcherTurnTests
         };
 
         // Outside starts the inside agent (first dispatch) and gets message 1.
+        // Inside is still running across all four drains, so every response is demoted
+        // from 'complete' to 'partial'.
         var r1 = await h.Dispatcher.DispatchAsync(ToolName, BuildArgs(), null, progress: null, CancellationToken.None);
-        Assert.Equal("complete", r1.Status);
+        Assert.Equal("partial", r1.Status);
         Assert.Equal("m1", r1.Message);
 
         // Exactly one SendAsync so far: the inside turn is still running, parked.
@@ -354,12 +359,12 @@ public class ToolDispatcherTurnTests
 
         // Outside gets message 2.
         var r2 = await h.Dispatcher.DispatchAsync(ToolName, BuildArgs(), null, progress: null, CancellationToken.None);
-        Assert.Equal("complete", r2.Status);
+        Assert.Equal("partial", r2.Status);
         Assert.Equal("m2", r2.Message);
 
         // Outside gets message 3.
         var r3 = await h.Dispatcher.DispatchAsync(ToolName, BuildArgs(), null, progress: null, CancellationToken.None);
-        Assert.Equal("complete", r3.Status);
+        Assert.Equal("partial", r3.Status);
         Assert.Equal("m3", r3.Message);
 
         // Still a single SendAsync — the inside agent's turn is reused across dispatches.
@@ -449,6 +454,8 @@ public class ToolDispatcherTurnTests
 
                 return await behaviour(sessionId, registry, ct).ConfigureAwait(false);
             }
+
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
         }
     }
 }

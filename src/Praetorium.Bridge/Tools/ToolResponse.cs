@@ -18,7 +18,10 @@ public class ToolResponse
 
     /// <summary>
     /// Gets or sets the status of the tool response.
-    /// Valid values: "complete", "input_requested", "error".
+    /// Valid values: "complete", "partial", "input_requested", "error".
+    /// <c>partial</c> indicates that the agent is still running and has streamed a
+    /// non-blocking payload; the caller must invoke the same tool again to keep
+    /// draining. No caller parameters are required for such a rejoin call.
     /// </summary>
     [JsonPropertyName("status")]
     public string Status { get; set; } = "complete";
@@ -69,6 +72,24 @@ public class ToolResponse
         return new ToolResponse
         {
             Status = "complete",
+            Message = message,
+            Metadata = metadata
+        };
+    }
+
+    /// <summary>
+    /// Creates a ToolResponse indicating a non-blocking intermediate payload. The
+    /// agent is still running; the caller must invoke the same tool again to receive
+    /// further output. No caller parameters are required for the rejoin call.
+    /// </summary>
+    /// <param name="message">Optional message describing the intermediate payload.</param>
+    /// <param name="metadata">Optional metadata to include with the response.</param>
+    /// <returns>A ToolResponse with status "partial".</returns>
+    public static ToolResponse Partial(string? message = null, object? metadata = null)
+    {
+        return new ToolResponse
+        {
+            Status = "partial",
             Message = message,
             Metadata = metadata
         };

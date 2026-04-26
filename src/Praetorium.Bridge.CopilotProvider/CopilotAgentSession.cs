@@ -13,7 +13,7 @@ namespace Praetorium.Bridge.CopilotProvider;
 /// Also implements <see cref="IAgentSessionObservable"/> so the dashboard can render a live
 /// transcript of the agent's internal activity (assistant text, tool calls, errors).
 /// </summary>
-internal sealed class CopilotAgentSession : IAgentSession, IAgentSessionObservable, IDisposable
+internal sealed class CopilotAgentSession : IAgentSession, IAgentSessionObservable
 {
     private readonly CopilotSession _session;
     private readonly IDisposable? _subscription;
@@ -184,9 +184,20 @@ internal sealed class CopilotAgentSession : IAgentSession, IAgentSessionObservab
             completion(tcs);
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
+        // Stop receiving SDK events first so disposing the underlying session
+        // doesn't surface terminal events into a half-disposed handler.
         try { _subscription?.Dispose(); } catch { }
+
+        // Fault any caller still awaiting SendAsync.
         CompleteTurn(r => r.TrySetCanceled());
+
+        // Remove the loopback MCP registration created for this session so
+        // the per-session bearer token / sessionKey entry doesn't leak.
+        try { _internalMcpRegistry.Unregister(_internalSessionKey); } catch { }
+
+        // Finally release the underlying SDK session.
+        try { await _session.DisposeAsync().ConfigureAwait(false); } catch { }
     }
 }

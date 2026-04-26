@@ -83,6 +83,30 @@ public class SignalRegistry : ISignalRegistry
     }
 
     /// <inheritdoc />
+    public bool HasPendingInboundWaiter(string sessionId)
+    {
+        EnsureId(sessionId);
+        if (!_sessions.TryGetValue(sessionId, out var slot))
+            return false;
+        lock (slot.Inbound.Lock)
+        {
+            return slot.Inbound.Waiter != null;
+        }
+    }
+
+    /// <inheritdoc />
+    public bool HasPendingOutbound(string sessionId)
+    {
+        EnsureId(sessionId);
+        if (!_sessions.TryGetValue(sessionId, out var slot))
+            return false;
+        lock (slot.Outbound.Lock)
+        {
+            return slot.Outbound.Pending.Count > 0;
+        }
+    }
+
+    /// <inheritdoc />
     public void CancelWaiters(string sessionId)
     {
         EnsureId(sessionId);

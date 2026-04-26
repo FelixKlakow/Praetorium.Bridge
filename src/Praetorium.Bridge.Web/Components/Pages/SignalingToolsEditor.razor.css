@@ -144,65 +144,6 @@
 }
 
 /* ---- Buttons (component-scoped) ---- */
-.add-button {
-    padding: 6px 12px;
-    background: var(--color-primary, #3b82f6);
-    border: 1px solid var(--color-primary-hover, #2563eb);
-    border-radius: 4px;
-    color: #ffffff;
-    font-weight: 500;
-    font-size: 12px;
-    cursor: pointer;
-    white-space: nowrap;
-    transition: background 0.15s;
-}
-
-.add-button:hover:not(:disabled) {
-    background: var(--color-primary-hover, #2563eb);
-}
-
-.add-button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-}
-
-.add-button.small {
-    padding: 4px 10px;
-    font-size: 11px;
-}
-
-.save-button {
-    padding: 7px 14px;
-    background: var(--color-primary, #3b82f6);
-    border: 1px solid var(--color-primary-hover, #2563eb);
-    border-radius: 4px;
-    color: #ffffff;
-    font-weight: 600;
-    font-size: 12px;
-    cursor: pointer;
-    transition: background 0.15s;
-}
-
-.save-button:hover {
-    background: var(--color-primary-hover, #2563eb);
-}
-
-.cancel-button {
-    padding: 7px 14px;
-    background: var(--surface-card, #ffffff);
-    border: 1px solid var(--border-color, #e2e8f0);
-    border-radius: 4px;
-    color: var(--text-secondary, #475569);
-    font-weight: 500;
-    font-size: 12px;
-    cursor: pointer;
-    transition: background 0.15s;
-}
-
-.cancel-button:hover {
-    background: var(--surface-muted, #f1f5f9);
-}
-
 .remove-button {
     margin-left: auto;
     width: 24px;

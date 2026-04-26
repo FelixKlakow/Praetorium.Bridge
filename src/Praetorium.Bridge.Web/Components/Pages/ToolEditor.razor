@@ -160,7 +160,69 @@
                 <div class="section-header">
                     <h3>System Prompt</h3>
                 </div>
-                <p class="section-description">The prompt template sent to the agent. Reference parameters using <code>{{PLACEHOLDER_NAME}}</code>.</p>
+                <p class="section-description">
+                    Static instructions installed on the agent's session at creation time — typically a short
+                    description of the tool-calling conventions. Leave as <strong>Default</strong> to inherit from
+                    <code>defaults.systemPrompt</code>. Inline content and a prompt file are mutually exclusive.
+                </p>
+
+                <div class="form-group">
+                    <label>Source:</label>
+                    <select value="@SystemPromptMode" @onchange="OnSystemPromptModeChangedAsync" class="form-input">
+                        <option value="default">Default (inherit from defaults.systemPrompt)</option>
+                        <option value="inline">Inline content</option>
+                        <option value="file">Prompt file</option>
+                    </select>
+                </div>
+
+                @if (SystemPromptMode == "inline")
+                {
+                    <div class="form-group">
+                        <textarea class="form-textarea" rows="6"
+                                  value="@(Tool!.SystemPrompt?.Content ?? string.Empty)"
+                                  @onchange="OnSystemPromptContentChanged"
+                                  placeholder="You are a bridged agent. Respond exclusively by calling the signaling tools..."></textarea>
+                        <p class="field-hint">Kept verbatim and installed as the agent's system message.</p>
+                    </div>
+                }
+                else if (SystemPromptMode == "file")
+                {
+                    <div class="form-group">
+                        <label>Prompt File:</label>
+                        <div class="inline-row">
+                            <input type="text" value="@(Tool!.SystemPrompt?.PromptFile ?? string.Empty)"
+                                   @onchange="OnSystemPromptFileChangedAsync"
+                                   class="form-input" placeholder="@DefaultSystemPromptFilename()" />
+                            @if (!SystemPromptFileExists())
+                            {
+                                <button type="button" class="save-button small"
+                                        @onclick="CreateSystemPromptFileAsync"
+                                        title="Create this file in the prompts directory">
+                                    Create file
+                                </button>
+                            }
+                        </div>
+                        <p class="field-hint">Path relative to the prompts directory. The file contents are used verbatim — no templating.</p>
+                        @if (!SystemPromptFileExists() && !string.IsNullOrWhiteSpace(Tool!.SystemPrompt?.PromptFile))
+                        {
+                            <p class="field-hint field-hint-warn">⚠ File does not exist yet. Click <strong>Create file</strong> to create it, or save to persist the empty file on disk.</p>
+                        }
+                        <textarea class="form-textarea" rows="6"
+                                  value="@systemPromptFileContent"
+                                  @onchange="OnSystemPromptFileContentChanged"
+                                  placeholder="# System instructions..."></textarea>
+                    </div>
+                }
+            </div>
+
+            <div class="section prompt-section">
+                <div class="section-header">
+                    <h3>Tool Prompt</h3>
+                </div>
+                <p class="section-description">
+                    Per-turn user message sent to the agent each time a fresh turn starts.
+                    Reference parameters using <code>{{PLACEHOLDER_NAME}}</code>.
+                </p>
 
                 <div class="form-group">
                     <label>Prompt File:</label>
@@ -222,15 +284,15 @@
                             }
                             else
                             {
-                                <ul class="placeholder-list">
+                                <div class="chip-list">
                                     @foreach (var p in detected)
                                     {
                                         var known = IsKnownPlaceholder(p);
-                                        <li class="@(known ? "known" : "unknown")">
-                                            <code>{{@p}}</code>
-                                        </li>
+                                        <span class="chip @(known ? "known" : "unknown")">
+                                            @FromPlaceholder(p)
+                                        </span>
                                     }
-                                </ul>
+                                </div>
                             }
                         </div>
                     </aside>
@@ -456,6 +518,19 @@
     private string? loadedPromptFile;
     private bool promptDirty;
 
+    // System-prompt (static, installed on the agent session) editor state.
+    // SystemPromptMode is derived from Tool.SystemPrompt and drives which sub-editor is shown.
+    private string SystemPromptMode = "default";
+    private string systemPromptFileContent = string.Empty;
+    private string? loadedSystemPromptFile;
+    private bool systemPromptFileDirty;
+
+    // Editor-local caches that survive mode toggles. Without these, switching
+    // file <-> inline (or via 'default') would silently wipe the inactive field's
+    // last value because the model only allows one of Content/PromptFile to be set.
+    private string? cachedInlineContent;
+    private string? cachedPromptFile;
+
     // Signaling editor ref (for coordinated save)
     private SignalingToolsEditor? signalingEditor;
 
@@ -472,7 +547,7 @@
     private string selectedToolSourceToAdd = "";
 
     private static readonly System.Text.RegularExpressions.Regex PlaceholderRegex =
-        new(@"\{\{(?:#(?:if|each)\s+)?([A-Z_][A-Z_0-9]*)\}\}",
+        new(@"\{\{(?:#(?:if|each)\s+)?([A-Za-z_][A-Za-z_0-9]*)\}\}",
             System.Text.RegularExpressions.RegexOptions.Compiled);
 
     protected override async Task OnParametersSetAsync()
@@ -480,7 +555,9 @@
         EnsureToolInitialized();
         availablePromptFiles = ConfigService.ListPromptFiles().ToList();
         EnsureReferenceIdParameter();
+        SyncSystemPromptMode();
         await LoadPromptContentAsync();
+        await LoadSystemPromptFileContentAsync();
     }
 
     private async Task SetActiveTabAsync(string tab)
@@ -611,6 +688,168 @@
     {
         promptContent = e.Value?.ToString() ?? string.Empty;
         promptDirty = true;
+    }
+
+    // ==================== TOOL-LEVEL SYSTEM PROMPT EDITOR ====================
+
+    private void SyncSystemPromptMode()
+    {
+        var sp = Tool?.SystemPrompt;
+        if (sp == null)
+        {
+            SystemPromptMode = "default";
+        }
+        else if (!string.IsNullOrWhiteSpace(sp.PromptFile))
+        {
+            SystemPromptMode = "file";
+        }
+        else
+        {
+            // Treat a non-null SystemPrompt without PromptFile as inline, even if Content is empty —
+            // the user explicitly opted into overriding the default.
+            SystemPromptMode = "inline";
+        }
+
+        // Prime the round-trip caches from the loaded model so toggling preserves values.
+        cachedInlineContent = sp?.Content;
+        cachedPromptFile = sp?.PromptFile;
+    }
+
+    private async Task OnSystemPromptModeChangedAsync(ChangeEventArgs e)
+    {
+        var mode = e.Value?.ToString() ?? "default";
+        SystemPromptMode = mode;
+
+        // Capture whichever value the user last edited so it survives the toggle.
+        if (Tool?.SystemPrompt != null)
+        {
+            if (!string.IsNullOrEmpty(Tool.SystemPrompt.Content))
+                cachedInlineContent = Tool.SystemPrompt.Content;
+            if (!string.IsNullOrWhiteSpace(Tool.SystemPrompt.PromptFile))
+                cachedPromptFile = Tool.SystemPrompt.PromptFile;
+        }
+
+        switch (mode)
+        {
+            case "default":
+                // Caches are retained so a later switch back into inline/file restores them.
+                Tool!.SystemPrompt = null;
+                systemPromptFileContent = string.Empty;
+                loadedSystemPromptFile = null;
+                systemPromptFileDirty = false;
+                break;
+            case "inline":
+                Tool!.SystemPrompt = new SystemPromptConfiguration
+                {
+                    Content = cachedInlineContent ?? string.Empty,
+                    PromptFile = null,
+                };
+                systemPromptFileContent = string.Empty;
+                loadedSystemPromptFile = null;
+                systemPromptFileDirty = false;
+                break;
+            case "file":
+                Tool!.SystemPrompt = new SystemPromptConfiguration
+                {
+                    Content = null,
+                    PromptFile = cachedPromptFile,
+                };
+                await LoadSystemPromptFileContentAsync();
+                break;
+        }
+    }
+
+    private void OnSystemPromptContentChanged(ChangeEventArgs e)
+    {
+        Tool!.SystemPrompt ??= new SystemPromptConfiguration();
+        var value = e.Value?.ToString() ?? string.Empty;
+        Tool.SystemPrompt.Content = value;
+        Tool.SystemPrompt.PromptFile = null;
+        cachedInlineContent = value;
+    }
+
+    private async Task OnSystemPromptFileChangedAsync(ChangeEventArgs e)
+    {
+        var newPath = (e.Value?.ToString() ?? string.Empty).Trim();
+        Tool!.SystemPrompt ??= new SystemPromptConfiguration();
+        Tool.SystemPrompt.PromptFile = string.IsNullOrEmpty(newPath) ? null : newPath;
+        Tool.SystemPrompt.Content = null;
+        cachedPromptFile = Tool.SystemPrompt.PromptFile;
+        await LoadSystemPromptFileContentAsync();
+    }
+
+    private void OnSystemPromptFileContentChanged(ChangeEventArgs e)
+    {
+        systemPromptFileContent = e.Value?.ToString() ?? string.Empty;
+        systemPromptFileDirty = true;
+    }
+
+    private async Task LoadSystemPromptFileContentAsync()
+    {
+        var file = Tool?.SystemPrompt?.PromptFile;
+        if (string.IsNullOrWhiteSpace(file))
+        {
+            systemPromptFileContent = string.Empty;
+            loadedSystemPromptFile = null;
+            systemPromptFileDirty = false;
+            return;
+        }
+
+        if (loadedSystemPromptFile == file && !systemPromptFileDirty) return;
+
+        try
+        {
+            systemPromptFileContent = await ConfigService.GetPromptContentAsync(file);
+            loadedSystemPromptFile = file;
+            systemPromptFileDirty = false;
+        }
+        catch
+        {
+            systemPromptFileContent = string.Empty;
+            loadedSystemPromptFile = file;
+            systemPromptFileDirty = false;
+        }
+    }
+
+    private string DefaultSystemPromptFilename() =>
+        SanitizeSegment(string.IsNullOrWhiteSpace(ToolName) ? "tool" : ToolName) + "-system-prompt.md";
+
+    private bool SystemPromptFileExists()
+    {
+        var file = Tool?.SystemPrompt?.PromptFile;
+        if (string.IsNullOrWhiteSpace(file)) return false;
+        try
+        {
+            return ConfigService.PromptFileExists(file);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private async Task CreateSystemPromptFileAsync()
+    {
+        Tool!.SystemPrompt ??= new SystemPromptConfiguration();
+        if (string.IsNullOrWhiteSpace(Tool.SystemPrompt.PromptFile))
+        {
+            Tool.SystemPrompt.PromptFile = DefaultSystemPromptFilename();
+        }
+        Tool.SystemPrompt.Content = null;
+
+        try
+        {
+            // Seed new files with the starter content already visible in the textarea
+            // so nothing the user has typed is lost.
+            await ConfigService.SavePromptContentAsync(Tool.SystemPrompt.PromptFile, systemPromptFileContent ?? string.Empty);
+            loadedSystemPromptFile = Tool.SystemPrompt.PromptFile;
+            systemPromptFileDirty = false;
+            availablePromptFiles = ConfigService.ListPromptFiles().ToList();
+        }
+        catch (Exception ex)
+        {
+            SaveStatus = $"Error: {ex.Message}";
+        }
     }
 
     private string DefaultPromptFilename() =>
@@ -843,6 +1082,17 @@
                 await ConfigService.SavePromptContentAsync(file, promptContent ?? string.Empty);
                 loadedPromptFile = file;
                 promptDirty = false;
+            }
+
+            // Persist the static system-prompt file when file-mode is active.
+            if (SystemPromptMode == "file"
+                && !string.IsNullOrWhiteSpace(Tool?.SystemPrompt?.PromptFile)
+                && (systemPromptFileDirty || Tool.SystemPrompt.PromptFile != loadedSystemPromptFile))
+            {
+                var spFile = Tool.SystemPrompt.PromptFile!;
+                await ConfigService.SavePromptContentAsync(spFile, systemPromptFileContent ?? string.Empty);
+                loadedSystemPromptFile = spFile;
+                systemPromptFileDirty = false;
             }
 
             // Persist any inline-edited signaling prompts.

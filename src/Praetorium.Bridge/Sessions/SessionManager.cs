@@ -26,7 +26,10 @@ public class SessionManager : ISessionManager, IHostedService
     private readonly ILogger<SessionManager> _logger;
     private readonly ConcurrentDictionary<string, IAgentSession> _activeAgents = new();
     private readonly ConcurrentDictionary<string, Task<string>> _runningTurns = new();
-    private Timer? _orphanDetectionTimer;
+    private static readonly TimeSpan OrphanDetectionInterval = TimeSpan.FromMinutes(1);
+    private PeriodicTimer? _orphanDetectionTimer;
+    private CancellationTokenSource? _orphanDetectionCts;
+    private Task? _orphanDetectionLoop;
 
     /// <summary>
     /// Initializes a new instance of the SessionManager class.
@@ -51,24 +54,68 @@ public class SessionManager : ISessionManager, IHostedService
     }
 
     /// <summary>
-    /// Starts the orphan detection background task.
+    /// Starts the orphan detection background loop.
     /// </summary>
     public void StartOrphanDetection()
     {
-        _orphanDetectionTimer = new Timer(
-            callback: _ => DetectAndCleanupOrphanSessionsAsync().GetAwaiter().GetResult(),
-            state: null,
-            dueTime: TimeSpan.FromMinutes(1),
-            period: TimeSpan.FromMinutes(1));
+        if (_orphanDetectionLoop != null)
+            return;
+
+        _orphanDetectionCts = new CancellationTokenSource();
+        _orphanDetectionTimer = new PeriodicTimer(OrphanDetectionInterval);
+        _orphanDetectionLoop = Task.Run(() => OrphanDetectionLoopAsync(_orphanDetectionTimer, _orphanDetectionCts.Token));
     }
 
     /// <summary>
-    /// Stops the orphan detection background task.
+    /// Stops the orphan detection background loop and waits for it to complete.
     /// </summary>
-    public void StopOrphanDetection()
+    public async Task StopOrphanDetectionAsync()
     {
-        _orphanDetectionTimer?.Dispose();
+        var loop = _orphanDetectionLoop;
+        var cts = _orphanDetectionCts;
+        var timer = _orphanDetectionTimer;
+
+        _orphanDetectionLoop = null;
+        _orphanDetectionCts = null;
         _orphanDetectionTimer = null;
+
+        if (cts != null)
+        {
+            try { cts.Cancel(); } catch (ObjectDisposedException) { }
+        }
+
+        timer?.Dispose();
+
+        if (loop != null)
+        {
+            try { await loop.ConfigureAwait(false); }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { _logger.LogError(ex, "Orphan detection loop terminated with an error."); }
+        }
+
+        cts?.Dispose();
+    }
+
+    private async Task OrphanDetectionLoopAsync(PeriodicTimer timer, CancellationToken ct)
+    {
+        try
+        {
+            while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false))
+            {
+                try
+                {
+                    await DetectAndCleanupOrphanSessionsAsync().ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error during orphan session detection.");
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // expected on shutdown
+        }
     }
 
     /// <summary>
@@ -164,8 +211,8 @@ public class SessionManager : ISessionManager, IHostedService
             return;
         }
 
-        // Remove the agent session from tracking
-        _activeAgents.TryRemove(sessionId, out _);
+        // Remove the agent session from tracking and dispose the underlying provider resources.
+        await DisposeActiveAgentAsync(sessionId).ConfigureAwait(false);
         _runningTurns.TryRemove(sessionId, out _);
 
         session.State = SessionState.Pooled;
@@ -201,7 +248,7 @@ public class SessionManager : ISessionManager, IHostedService
             return;
         }
 
-        _activeAgents.TryRemove(sessionId, out _);
+        await DisposeActiveAgentAsync(sessionId).ConfigureAwait(false);
         _runningTurns.TryRemove(sessionId, out _);
 
         session.State = SessionState.Pooled;
@@ -255,7 +302,7 @@ public class SessionManager : ISessionManager, IHostedService
             return;
         }
 
-        _activeAgents.TryRemove(sessionId, out _);
+        await DisposeActiveAgentAsync(sessionId).ConfigureAwait(false);
         _runningTurns.TryRemove(sessionId, out _);
 
         session.State = SessionState.Crashed;
@@ -284,7 +331,7 @@ public class SessionManager : ISessionManager, IHostedService
         if (string.IsNullOrEmpty(sessionId))
             throw new ArgumentException("Session ID cannot be null or empty.", nameof(sessionId));
 
-        _activeAgents.TryRemove(sessionId, out _);
+        await DisposeActiveAgentAsync(sessionId).ConfigureAwait(false);
         _runningTurns.TryRemove(sessionId, out _);
         _signalRegistry.RemoveSession(sessionId);
         await _sessionStore.RemoveAsync(sessionId, ct).ConfigureAwait(false);
@@ -329,7 +376,7 @@ public class SessionManager : ISessionManager, IHostedService
         {
             if (session.State != SessionState.Crashed && session.State != SessionState.Pooled)
             {
-                _activeAgents.TryRemove(session.SessionId, out _);
+                await DisposeActiveAgentAsync(session.SessionId).ConfigureAwait(false);
                 _runningTurns.TryRemove(session.SessionId, out _);
                 session.State = SessionState.Crashed;
                 session.LastActivityAt = DateTimeOffset.UtcNow;
@@ -388,36 +435,50 @@ public class SessionManager : ISessionManager, IHostedService
     /// </summary>
     private async Task DetectAndCleanupOrphanSessionsAsync()
     {
+        var allSessions = await _sessionStore.GetAllAsync(CancellationToken.None)
+            .ConfigureAwait(false);
+
+        var now = DateTimeOffset.UtcNow;
+        var timeoutDuration = TimeSpan.FromMinutes(30);
+
+        var orphanedSessions = allSessions
+            .Where(s => s.State == SessionState.Spawning ||
+                (s.State == SessionState.Active && now - s.LastActivityAt > timeoutDuration))
+            .ToList();
+
+        foreach (var session in orphanedSessions)
+        {
+            _logger.LogWarning(
+                "Detected orphaned session {SessionId} in state {State}. Removing.",
+                session.SessionId,
+                session.State);
+
+            await DisposeActiveAgentAsync(session.SessionId).ConfigureAwait(false);
+            _runningTurns.TryRemove(session.SessionId, out _);
+            _signalRegistry.RemoveSession(session.SessionId);
+            await _sessionStore.RemoveAsync(session.SessionId, CancellationToken.None)
+                .ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Removes the active agent for the given session and disposes its underlying
+    /// provider resources (SDK session handle, loopback MCP registration, etc.).
+    /// Disposal failures are logged but never thrown so they cannot interfere with
+    /// session-state bookkeeping by the caller.
+    /// </summary>
+    private async Task DisposeActiveAgentAsync(string sessionId)
+    {
+        if (!_activeAgents.TryRemove(sessionId, out var agent))
+            return;
+
         try
         {
-            var allSessions = await _sessionStore.GetAllAsync(CancellationToken.None)
-                .ConfigureAwait(false);
-
-            var now = DateTimeOffset.UtcNow;
-            var timeoutDuration = TimeSpan.FromMinutes(30);
-
-            var orphanedSessions = allSessions
-                .Where(s => s.State == SessionState.Spawning ||
-                    (s.State == SessionState.Active && now - s.LastActivityAt > timeoutDuration))
-                .ToList();
-
-            foreach (var session in orphanedSessions)
-            {
-                _logger.LogWarning(
-                    "Detected orphaned session {SessionId} in state {State}. Removing.",
-                    session.SessionId,
-                    session.State);
-
-                _activeAgents.TryRemove(session.SessionId, out _);
-                _runningTurns.TryRemove(session.SessionId, out _);
-                _signalRegistry.RemoveSession(session.SessionId);
-                await _sessionStore.RemoveAsync(session.SessionId, CancellationToken.None)
-                    .ConfigureAwait(false);
-            }
+            await agent.DisposeAsync().ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error during orphan session detection.");
+            _logger.LogWarning(ex, "Error disposing agent for session {SessionId}.", sessionId);
         }
     }
 
@@ -448,7 +509,7 @@ public class SessionManager : ISessionManager, IHostedService
     public async Task<IAgentSession> CreateAgentAsync(
         string sessionId,
         string toolName,
-        string prompt,
+        string systemPrompt,
         AgentConfiguration agentConfig,
         List<AgentToolSource> toolSources,
         List<SignalingToolDefinition> signalingTools,
@@ -463,7 +524,7 @@ public class SessionManager : ISessionManager, IHostedService
 
         var agentContext = new AgentContext(
             toolName,
-            prompt,
+            systemPrompt,
             agentConfig,
             toolSources ?? new(),
             signalingTools ?? new());
@@ -479,7 +540,7 @@ public class SessionManager : ISessionManager, IHostedService
                 sessionId,
                 toolName,
                 session.ReferenceId,
-                prompt);
+                systemPrompt);
 
             await _hooks.OnSessionSpawnedAsync(hookContext, ct).ConfigureAwait(false);
         }
@@ -552,10 +613,9 @@ public class SessionManager : ISessionManager, IHostedService
     /// <summary>
     /// Stops the hosted service and halts orphan detection.
     /// </summary>
-    public Task StopAsync(CancellationToken cancellationToken)
+    public async Task StopAsync(CancellationToken cancellationToken)
     {
         _logger.LogInformation("SessionManager hosted service stopping.");
-        StopOrphanDetection();
-        return Task.CompletedTask;
+        await StopOrphanDetectionAsync().ConfigureAwait(false);
     }
 }

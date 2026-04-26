@@ -9,6 +9,7 @@
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
+    gap: 20px;
     margin-bottom: 24px;
     border-bottom: 1px solid var(--border-color, #e2e8f0);
     padding-bottom: 16px;
@@ -60,33 +61,6 @@
     border-color: var(--color-primary, #3b82f6);
     box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
     color: var(--text-primary, #0f172a);
-}
-
-.save-button {
-    padding: 8px 20px;
-    background: var(--color-primary, #3b82f6);
-    border: 1px solid var(--color-primary-hover, #2563eb);
-    border-radius: 4px;
-    color: #ffffff;
-    font-weight: 600;
-    font-size: 13px;
-    cursor: pointer;
-    flex-shrink: 0;
-    font-family: var(--font-sans, inherit);
-    transition: background 0.15s;
-}
-
-.save-button:hover:not(:disabled) {
-    background: var(--color-primary-hover, #2563eb);
-}
-
-.save-button:disabled {
-    opacity: 0.55;
-    cursor: not-allowed;
-}
-
-.save-button:active:not(:disabled) {
-    transform: scale(0.98);
 }
 
 .status-message {
@@ -349,24 +323,6 @@
     justify-content: center;
 }
 
-.delete-button {
-    padding: 8px 16px;
-    background: var(--color-danger-bg, #fef2f2);
-    border: 1px solid var(--color-danger-border, #fecaca);
-    border-radius: 4px;
-    color: var(--color-danger-text, #b91c1c);
-    font-weight: 500;
-    font-size: 13px;
-    cursor: pointer;
-    font-family: var(--font-sans, inherit);
-    transition: background 0.15s, border-color 0.15s;
-}
-
-.delete-button:hover {
-    background: #fee2e2;
-    border-color: #fca5a5;
-}
-
 .delete-confirm {
     display: flex;
     align-items: center;
@@ -387,16 +343,6 @@
 .confirm-actions {
     display: flex;
     gap: 8px;
-}
-
-.confirm-actions .cancel-button {
-    padding: 6px 12px;
-    background: #ffffff;
-    border: 1px solid #d1d5db;
-    border-radius: 4px;
-    color: #374151;
-    font-size: 13px;
-    cursor: pointer;
 }
 
 .confirm-actions .delete-button {
@@ -572,34 +518,6 @@
 }
 
 /* Add button styles */
-.add-button {
-    padding: 6px 12px;
-    background: var(--color-primary, #3b82f6);
-    border: 1px solid var(--color-primary-hover, #2563eb);
-    border-radius: 4px;
-    color: #ffffff;
-    font-weight: 500;
-    font-size: 12px;
-    cursor: pointer;
-    transition: background 0.15s;
-    white-space: nowrap;
-    font-family: var(--font-sans, inherit);
-}
-
-.add-button:hover:not(:disabled) {
-    background: var(--color-primary-hover, #2563eb);
-}
-
-.add-button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-}
-
-.add-button.small {
-    padding: 4px 8px;
-    font-size: 11px;
-}
-
 /* Cancel button */
 .cancel-button {
     padding: 6px 12px;
@@ -617,11 +535,6 @@
 }
 
 .cancel-button.small {
-    padding: 4px 8px;
-    font-size: 11px;
-}
-
-.save-button.small {
     padding: 4px 8px;
     font-size: 11px;
 }
@@ -655,6 +568,16 @@
 
 .form-row .form-group {
     margin-bottom: 0;
+    flex: 1;
+}
+
+.inline-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.inline-row .form-input {
     flex: 1;
 }
 

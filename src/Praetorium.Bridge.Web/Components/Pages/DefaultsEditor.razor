@@ -4,13 +4,13 @@
 @inject ConfigurationService ConfigService
 @inject IAgentProvider AgentProvider
 
-<div class="editor-content">
+<div class="tool-editor">
     <div class="editor-header">
-        <div>
+        <div class="editor-header-text">
             <h2>Default Settings</h2>
             <p class="tool-description">Defaults applied to tools that do not override these values.</p>
         </div>
-        <div class="header-actions">
+        <div class="header-actions stacked">
             <button class="save-button" @onclick="SaveAsync" disabled="@isSaving">
                 @(isSaving ? "Saving..." : "Save")
             </button>
@@ -22,109 +22,202 @@
         <div class="status-message @(saveStatus.StartsWith("Error") ? "error" : "success")">@saveStatus</div>
     }
 
-    <div class="section">
-        <h3>Agent Defaults</h3>
-
-        <div class="form-group">
-            <label>Default Model:</label>
-            @if (isLoadingModels)
-            {
-                <div class="models-loading">Loading available deployments...</div>
-            }
-            else if (availableModels.Count > 0)
-            {
-                <select value="@(Defaults.Agent.Model ?? string.Empty)"
-                        @onchange="OnModelChangedAsync" class="form-input">
-                    <option value="">-- Select a deployment --</option>
-                    @foreach (var m in availableModels)
-                    {
-                        <option value="@m">@m</option>
-                    }
-                </select>
-            }
-            else
-            {
-                <input type="text" value="@(Defaults.Agent.Model ?? string.Empty)"
-                       @onchange="OnModelChangedAsync" class="form-input" placeholder="e.g., gpt-4o" />
-                <p class="field-hint field-hint-warn">⚠ Could not retrieve deployments. Enter the deployment name manually.</p>
-            }
-        </div>
-
-        <div class="form-group">
-            <label>Default Reasoning Effort:</label>
-            @if (isLoadingCapabilities)
-            {
-                <div class="models-loading">Checking model capabilities...</div>
-            }
-            else if (string.IsNullOrEmpty(Defaults.Agent.Model))
-            {
-                <select class="form-input" disabled>
-                    <option>Select a default model first</option>
-                </select>
-            }
-            else if (selectedCapabilities?.SupportsReasoningEffort != true || selectedCapabilities.SupportedReasoningLevels.Count == 0)
-            {
-                <select class="form-input" disabled>
-                    <option>Not supported by @Defaults.Agent.Model</option>
-                </select>
-            }
-            else
-            {
-                <select @bind="Defaults.Agent.ReasoningEffort" class="form-input">
-                    <option value="">None</option>
-                    @foreach (var level in selectedCapabilities.SupportedReasoningLevels)
-                    {
-                        <option value="@level">@level</option>
-                    }
-                </select>
-            }
-        </div>
-
-        <div class="form-group">
-            <label>Default Prompt File:</label>
-            @if (availablePromptFiles.Count == 0)
-            {
-                <p class="field-hint field-hint-warn">No prompt files found. Create one in the Prompts page first.</p>
-            }
-            else
-            {
-                <select value="@(Defaults.Agent.PromptFile ?? string.Empty)"
-                        @onchange="(e) => Defaults.Agent.PromptFile = e.Value?.ToString()"
-                        class="form-input">
-                    <option value="">-- Select a prompt file --</option>
-                    @foreach (var file in availablePromptFiles)
-                    {
-                        <option value="@file">@file</option>
-                    }
-                </select>
-            }
+    <div class="editor-tabs">
+        <div class="tab-group">
+            <button class="tab @(activeTab == "agent" ? "active" : "")" @onclick='() => activeTab = "agent"'>
+                Agent Defaults
+            </button>
+            <button class="tab @(activeTab == "session" ? "active" : "")" @onclick='() => activeTab = "session"'>
+                Session Defaults
+            </button>
+            <button class="tab @(activeTab == "signaling" ? "active" : "")" @onclick='() => activeTab = "signaling"'>
+                Signaling
+            </button>
+            <button class="tab @(activeTab == "systemPrompt" ? "active" : "")" @onclick='() => activeTab = "systemPrompt"'>
+                System Prompt
+            </button>
         </div>
     </div>
 
-    <div class="section">
-        <h3>Session Defaults</h3>
+    <div class="tab-content">
+        @* ==================== AGENT DEFAULTS ==================== *@
+        @if (activeTab == "agent")
+        {
+            <div class="section">
+                <h3>Agent Defaults</h3>
 
-        <div class="form-group">
-            <label>Session Mode:</label>
-            <select @bind="Defaults.Session.Mode" class="form-input">
-                <option value="@SessionMode.PerConnection">Per Connection</option>
-                <option value="@SessionMode.PerReference">Per Reference</option>
-                <option value="@SessionMode.Global">Global</option>
-            </select>
-        </div>
+                <div class="form-group">
+                    <label>Default Model:</label>
+                    @if (isLoadingModels)
+                    {
+                        <div class="models-loading">Loading available deployments...</div>
+                    }
+                    else if (availableModels.Count > 0)
+                    {
+                        <select value="@(Defaults.Agent.Model ?? string.Empty)"
+                                @onchange="OnModelChangedAsync" class="form-input">
+                            <option value="">-- Select a deployment --</option>
+                            @foreach (var m in availableModels)
+                            {
+                                <option value="@m">@m</option>
+                            }
+                        </select>
+                    }
+                    else
+                    {
+                        <input type="text" value="@(Defaults.Agent.Model ?? string.Empty)"
+                               @onchange="OnModelChangedAsync" class="form-input" placeholder="e.g., gpt-4o" />
+                        <p class="field-hint field-hint-warn">⚠ Could not retrieve deployments. Enter the deployment name manually.</p>
+                    }
+                </div>
 
-        <div class="form-group">
-            <label>Pool Timeout (minutes):</label>
-            <input type="number" @bind="Defaults.Session.PoolTimeoutMinutes" class="form-input" min="1" max="1440" />
-        </div>
+                <div class="form-group">
+                    <label>Default Reasoning Effort:</label>
+                    @if (isLoadingCapabilities)
+                    {
+                        <div class="models-loading">Checking model capabilities...</div>
+                    }
+                    else if (string.IsNullOrEmpty(Defaults.Agent.Model))
+                    {
+                        <select class="form-input" disabled>
+                            <option>Select a default model first</option>
+                        </select>
+                    }
+                    else if (selectedCapabilities?.SupportsReasoningEffort != true || selectedCapabilities.SupportedReasoningLevels.Count == 0)
+                    {
+                        <select class="form-input" disabled>
+                            <option>Not supported by @Defaults.Agent.Model</option>
+                        </select>
+                    }
+                    else
+                    {
+                        <select @bind="Defaults.Agent.ReasoningEffort" class="form-input">
+                            <option value="">None</option>
+                            @foreach (var level in selectedCapabilities.SupportedReasoningLevels)
+                            {
+                                <option value="@level">@level</option>
+                            }
+                        </select>
+                    }
+                </div>
 
-        <div class="form-group">
-            <label>Response Timeout (seconds):</label>
-            <input type="number" @bind="Defaults.Session.ResponseTimeoutSeconds" class="form-input" min="10" max="3600" />
-        </div>
+                <div class="form-group">
+                    <label>Default Prompt File:</label>
+                    @if (availablePromptFiles.Count == 0)
+                    {
+                        <p class="field-hint field-hint-warn">No prompt files found. Create one in the Prompts page first.</p>
+                    }
+                    else
+                    {
+                        <select value="@(Defaults.Agent.PromptFile ?? string.Empty)"
+                                @onchange="(e) => Defaults.Agent.PromptFile = e.Value?.ToString()"
+                                class="form-input">
+                            <option value="">-- Select a prompt file --</option>
+                            @foreach (var file in availablePromptFiles)
+                            {
+                                <option value="@file">@file</option>
+                            }
+                        </select>
+                    }
+                </div>
+            </div>
+        }
+
+        @* ==================== SESSION DEFAULTS ==================== *@
+        @if (activeTab == "session")
+        {
+            <div class="section">
+                <h3>Session Defaults</h3>
+
+                <div class="form-group">
+                    <label>Session Mode:</label>
+                    <select @bind="Defaults.Session.Mode" class="form-input">
+                        <option value="@SessionMode.PerConnection">Per Connection</option>
+                        <option value="@SessionMode.PerReference">Per Reference</option>
+                        <option value="@SessionMode.Global">Global</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>Pool Timeout (minutes):</label>
+                    <input type="number" @bind="Defaults.Session.PoolTimeoutMinutes" class="form-input" min="1" max="1440" />
+                </div>
+
+                <div class="form-group">
+                    <label>Response Timeout (seconds):</label>
+                    <input type="number" @bind="Defaults.Session.ResponseTimeoutSeconds" class="form-input" min="10" max="3600" />
+                </div>
+            </div>
+        }
+
+        @* ==================== SIGNALING ==================== *@
+        @if (activeTab == "signaling")
+        {
+            <SignalingToolsEditor Signaling="Defaults.Signaling" AvailablePromptFiles="availablePromptFiles" ShowDefaultPresets="false" />
+        }
+
+        @* ==================== SYSTEM PROMPT ==================== *@
+        @if (activeTab == "systemPrompt")
+        {
+            <div class="section prompt-section">
+                <div class="section-header">
+                    <h3>Default System Prompt</h3>
+                </div>
+                <p class="section-description">
+                    Static instructions installed on the agent's session at creation time — typically a short
+                    description of the tool-calling conventions. Per-tool overrides take precedence over this value.
+                    Inline content and a prompt file are mutually exclusive.
+                </p>
+
+                <div class="form-group">
+                    <label>Source:</label>
+                    <select value="@SystemPromptMode" @onchange="OnSystemPromptModeChangedAsync" class="form-input">
+                        <option value="inline">Inline content</option>
+                        <option value="file">Prompt file</option>
+                    </select>
+                </div>
+
+                @if (SystemPromptMode == "inline")
+                {
+                    <div class="form-group">
+                        <textarea class="form-textarea" rows="8"
+                                  value="@(Defaults.SystemPrompt?.Content ?? string.Empty)"
+                                  @onchange="OnSystemPromptContentChanged"
+                                  placeholder="You are a bridged agent. Respond exclusively by calling the signaling tools..."></textarea>
+                        <p class="field-hint">Kept verbatim and installed as the agent's system message.</p>
+                    </div>
+                }
+                else if (SystemPromptMode == "file")
+                {
+                    <div class="form-group">
+                        <label>Prompt File:</label>
+                        <div class="inline-row">
+                            <input type="text" value="@(Defaults.SystemPrompt?.PromptFile ?? string.Empty)"
+                                   @onchange="OnSystemPromptFileChangedAsync"
+                                   class="form-input" placeholder="@DefaultSystemPromptFilename" />
+                            @if (!SystemPromptFileExists())
+                            {
+                                <button type="button" class="save-button small"
+                                        @onclick="CreateSystemPromptFileAsync"
+                                        title="Create this file in the prompts directory">
+                                    Create file
+                                </button>
+                            }
+                        </div>
+                        <p class="field-hint">Path relative to the prompts directory. The file contents are used verbatim — no templating.</p>
+                        @if (!SystemPromptFileExists() && !string.IsNullOrWhiteSpace(Defaults.SystemPrompt?.PromptFile))
+                        {
+                            <p class="field-hint field-hint-warn">⚠ File does not exist yet. Click <strong>Create file</strong> to create it, or save to persist the empty file on disk.</p>
+                        }
+                        <textarea class="form-textarea" rows="8"
+                                  value="@systemPromptFileContent"
+                                  @onchange="OnSystemPromptFileContentChanged"
+                                  placeholder="# System instructions..."></textarea>
+                    </div>
+                }
+            </div>
+        }
     </div>
-
-    <SignalingToolsEditor Signaling="Defaults.Signaling" AvailablePromptFiles="availablePromptFiles" ShowDefaultPresets="false" />
 </div>
 
 @code {
@@ -134,6 +227,7 @@
     [Parameter]
     public required Func<DefaultsConfiguration, Task> OnSave { get; set; }
 
+    private string activeTab = "agent";
     private bool isSaving;
     private string saveStatus = string.Empty;
 
@@ -146,13 +240,30 @@
 
     private List<string> availablePromptFiles = new();
 
-    protected override void OnParametersSet()
+    // Default system-prompt editor state (mirrors ToolEditor's System Prompt tab).
+    // The 'default' mode from ToolEditor is not offered here — this IS the default.
+    private const string DefaultSystemPromptFilename = "defaults-system-prompt.md";
+    private string SystemPromptMode = "inline";
+    private string systemPromptFileContent = string.Empty;
+    private string? loadedSystemPromptFile;
+    private bool systemPromptFileDirty;
+
+    // Editor-local caches that survive mode toggles. Without these, switching
+    // file <-> inline would silently wipe the inactive field's last value
+    // because the model only allows one of Content/PromptFile to be set at a time.
+    private string? cachedInlineContent;
+    private string? cachedPromptFile;
+
+    protected override async Task OnParametersSetAsync()
     {
         Defaults.Agent ??= new AgentConfiguration();
         Defaults.Session ??= new SessionConfiguration();
         Defaults.Signaling ??= new SignalingConfiguration();
         Defaults.Signaling.Tools ??= new List<SignalingToolEntry>();
+        Defaults.SystemPrompt ??= new SystemPromptConfiguration();
         availablePromptFiles = ConfigService.ListPromptFiles().ToList();
+        SyncSystemPromptMode();
+        await LoadSystemPromptFileContentAsync();
     }
 
     protected override async Task OnInitializedAsync()
@@ -218,6 +329,135 @@
         }
     }
 
+    // ==================== SYSTEM PROMPT EDITOR ====================
+
+    private void SyncSystemPromptMode()
+    {
+        var sp = Defaults.SystemPrompt;
+        SystemPromptMode = sp != null && !string.IsNullOrWhiteSpace(sp.PromptFile) ? "file" : "inline";
+        // Prime the round-trip caches from the loaded model so toggling preserves values.
+        cachedInlineContent = sp?.Content;
+        cachedPromptFile = sp?.PromptFile;
+    }
+
+    private async Task OnSystemPromptModeChangedAsync(ChangeEventArgs e)
+    {
+        var mode = e.Value?.ToString() ?? "inline";
+        SystemPromptMode = mode;
+        Defaults.SystemPrompt ??= new SystemPromptConfiguration();
+
+        switch (mode)
+        {
+            case "inline":
+                // Cache current PromptFile so a future switch back to 'file' restores it,
+                // then activate inline content from the cache.
+                if (!string.IsNullOrWhiteSpace(Defaults.SystemPrompt.PromptFile))
+                    cachedPromptFile = Defaults.SystemPrompt.PromptFile;
+                Defaults.SystemPrompt.PromptFile = null;
+                Defaults.SystemPrompt.Content = cachedInlineContent ?? string.Empty;
+                systemPromptFileContent = string.Empty;
+                loadedSystemPromptFile = null;
+                systemPromptFileDirty = false;
+                break;
+            case "file":
+                // Cache current Content so a future switch back to 'inline' restores it.
+                if (!string.IsNullOrEmpty(Defaults.SystemPrompt.Content))
+                    cachedInlineContent = Defaults.SystemPrompt.Content;
+                Defaults.SystemPrompt.Content = null;
+                Defaults.SystemPrompt.PromptFile = cachedPromptFile;
+                await LoadSystemPromptFileContentAsync();
+                break;
+        }
+    }
+
+    private void OnSystemPromptContentChanged(ChangeEventArgs e)
+    {
+        Defaults.SystemPrompt ??= new SystemPromptConfiguration();
+        var value = e.Value?.ToString() ?? string.Empty;
+        Defaults.SystemPrompt.Content = value;
+        Defaults.SystemPrompt.PromptFile = null;
+        cachedInlineContent = value;
+    }
+
+    private async Task OnSystemPromptFileChangedAsync(ChangeEventArgs e)
+    {
+        var newPath = (e.Value?.ToString() ?? string.Empty).Trim();
+        Defaults.SystemPrompt ??= new SystemPromptConfiguration();
+        Defaults.SystemPrompt.PromptFile = string.IsNullOrEmpty(newPath) ? null : newPath;
+        Defaults.SystemPrompt.Content = null;
+        cachedPromptFile = Defaults.SystemPrompt.PromptFile;
+        await LoadSystemPromptFileContentAsync();
+    }
+
+    private void OnSystemPromptFileContentChanged(ChangeEventArgs e)
+    {
+        systemPromptFileContent = e.Value?.ToString() ?? string.Empty;
+        systemPromptFileDirty = true;
+    }
+
+    private async Task LoadSystemPromptFileContentAsync()
+    {
+        var file = Defaults.SystemPrompt?.PromptFile;
+        if (string.IsNullOrWhiteSpace(file))
+        {
+            systemPromptFileContent = string.Empty;
+            loadedSystemPromptFile = null;
+            systemPromptFileDirty = false;
+            return;
+        }
+
+        if (loadedSystemPromptFile == file && !systemPromptFileDirty) return;
+
+        try
+        {
+            systemPromptFileContent = await ConfigService.GetPromptContentAsync(file);
+            loadedSystemPromptFile = file;
+            systemPromptFileDirty = false;
+        }
+        catch
+        {
+            systemPromptFileContent = string.Empty;
+            loadedSystemPromptFile = file;
+            systemPromptFileDirty = false;
+        }
+    }
+
+    private bool SystemPromptFileExists()
+    {
+        var file = Defaults.SystemPrompt?.PromptFile;
+        if (string.IsNullOrWhiteSpace(file)) return false;
+        try
+        {
+            return ConfigService.PromptFileExists(file);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private async Task CreateSystemPromptFileAsync()
+    {
+        Defaults.SystemPrompt ??= new SystemPromptConfiguration();
+        if (string.IsNullOrWhiteSpace(Defaults.SystemPrompt.PromptFile))
+        {
+            Defaults.SystemPrompt.PromptFile = DefaultSystemPromptFilename;
+        }
+        Defaults.SystemPrompt.Content = null;
+
+        try
+        {
+            await ConfigService.SavePromptContentAsync(Defaults.SystemPrompt.PromptFile, systemPromptFileContent ?? string.Empty);
+            loadedSystemPromptFile = Defaults.SystemPrompt.PromptFile;
+            systemPromptFileDirty = false;
+            availablePromptFiles = ConfigService.ListPromptFiles().ToList();
+        }
+        catch (Exception ex)
+        {
+            saveStatus = $"Error: {ex.Message}";
+        }
+    }
+
     private async Task SaveAsync()
     {
         if (isSaving)
@@ -227,7 +467,19 @@
         saveStatus = string.Empty;
         try
         {
+            // Persist the system-prompt file when file-mode is active.
+            if (SystemPromptMode == "file"
+                && !string.IsNullOrWhiteSpace(Defaults.SystemPrompt?.PromptFile)
+                && (systemPromptFileDirty || Defaults.SystemPrompt.PromptFile != loadedSystemPromptFile))
+            {
+                var spFile = Defaults.SystemPrompt.PromptFile!;
+                await ConfigService.SavePromptContentAsync(spFile, systemPromptFileContent ?? string.Empty);
+                loadedSystemPromptFile = spFile;
+                systemPromptFileDirty = false;
+            }
+
             await OnSave.Invoke(Defaults);
+            availablePromptFiles = ConfigService.ListPromptFiles().ToList();
             saveStatus = "Saved successfully";
             await Task.Delay(2000);
             saveStatus = string.Empty;

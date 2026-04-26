@@ -81,15 +81,87 @@ public class ToolDispatcher : IToolDispatcher
                 return ToolResponse.Error(error);
             }
 
-            // Step 2: Bind and validate parameters
-            ToolCallContext toolContext;
+            // Step 2: Resolve configuration slices used throughout the dispatch.
+            var agentConfig = toolDef.Agent ?? config.Defaults?.Agent ?? throw new InvalidOperationException("No agent configuration available");
+            var sessionConfig = toolDef.Session ?? config.Defaults?.Session ?? new SessionConfiguration();
+            var signalingConfig = toolDef.Signaling ?? config.Defaults?.Signaling ?? new SignalingConfiguration();
+            var systemPromptConfig = toolDef.SystemPrompt ?? config.Defaults?.SystemPrompt
+                ?? throw new InvalidOperationException("No system prompt configuration available");
+            var sessionMode = sessionConfig.Mode;
+
+            // Step 3: Pre-extract reserved parameters so we can locate the session BEFORE
+            // enforcing turn-phase-sensitive required-parameter validation.
+            ToolCallContext peekContext;
             try
             {
-                toolContext = _binder.Bind(toolDef, arguments);
+                peekContext = _binder.Bind(toolDef, arguments, TurnPhase.Rejoin);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Parameter binding failed for tool '{ToolName}'", toolName);
+                _logger.LogError(ex, "Parameter extraction failed for tool '{ToolName}'", toolName);
+                return ToolResponse.Error($"Parameter validation failed: {ex.Message}");
+            }
+
+            // Step 3a: Validate reasoning effort configuration
+            var model = agentConfig.Model ?? "claude-sonnet-4.6";
+            if (!string.IsNullOrEmpty(agentConfig.ReasoningEffort))
+            {
+                await ValidateReasoningEffortAsync(model, agentConfig.ReasoningEffort, toolName, ct);
+            }
+
+            var (sessionInfo, isNew) = await _sessionManager.GetOrCreateSessionAsync(
+                toolName,
+                peekContext.ReferenceId,
+                connectionId,
+                sessionMode,
+                agentConfig,
+                ct);
+
+            _logger.LogInformation("Session {SessionId} obtained (new={IsNew}) for tool '{ToolName}'", sessionInfo.SessionId, isNew, toolName);
+
+            if (connectionId != null)
+            {
+                _signalRegistry.RegisterConnectionBinding(sessionInfo.SessionId, connectionId);
+            }
+
+            // Step 4: Determine the turn phase from session state and caller payload.
+            //   NewTurn — no running turn (or previous one ended).
+            //   Resume  — a running turn AND the caller supplied a payload (resume params
+            //             or _input). Posting on a not-yet-registered inbound waiter is
+            //             safe: SignalRegistry buffers FIFO until the agent reads it.
+            //   Rejoin  — a running turn AND the caller supplied no payload (pure poll).
+            //
+            // NOTE: The phase MUST NOT depend on whether the agent has already registered
+            // an inbound waiter. Between the agent emitting an outbound signal and the
+            // agent's blocking handler reaching its WaitInboundAsync call, there is a
+            // race window during which the external caller can arrive — gating Resume
+            // on waiter presence would silently drop the caller's input in that window.
+            var existingTurn = isNew ? null : _sessionManager.GetRunningTurn(sessionInfo.SessionId);
+            var hasRunningTurn = existingTurn != null && !existingTurn.IsCompleted;
+            TurnPhase phase;
+            if (!hasRunningTurn)
+            {
+                phase = TurnPhase.NewTurn;
+            }
+            else if (CallerProvidedResumePayload(toolDef, peekContext))
+            {
+                phase = TurnPhase.Resume;
+            }
+            else
+            {
+                phase = TurnPhase.Rejoin;
+            }
+
+            // Step 5: Re-bind with the phase so required-parameter enforcement
+            // matches the actual dispatch semantics.
+            ToolCallContext toolContext;
+            try
+            {
+                toolContext = _binder.Bind(toolDef, arguments, phase);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Parameter binding failed for tool '{ToolName}' in phase {Phase}", toolName, phase);
                 return ToolResponse.Error($"Parameter validation failed: {ex.Message}");
             }
 
@@ -103,143 +175,31 @@ public class ToolDispatcher : IToolDispatcher
                     connectionId);
             }
 
-            // Step 3: Determine session mode and get or create session
-            var agentConfig = toolDef.Agent ?? config.Defaults?.Agent ?? throw new InvalidOperationException("No agent configuration available");
-            var sessionConfig = toolDef.Session ?? config.Defaults?.Session ?? new SessionConfiguration();
-            var signalingConfig = toolDef.Signaling ?? config.Defaults?.Signaling ?? new SignalingConfiguration();
-            var sessionMode = sessionConfig.Mode;
-
-            // Step 3a: Validate reasoning effort configuration
-            var model = agentConfig.Model ?? "claude-sonnet-4.6";
-            if (!string.IsNullOrEmpty(agentConfig.ReasoningEffort))
+            // Step 6: Dispatch based on phase.
+            switch (phase)
             {
-                await ValidateReasoningEffortAsync(model, agentConfig.ReasoningEffort, toolName, ct);
-            }
-
-            var (sessionInfo, isNew) = await _sessionManager.GetOrCreateSessionAsync(
-                toolName,
-                toolContext.ReferenceId,
-                connectionId,
-                sessionMode,
-                agentConfig,
-                ct);
-
-            _logger.LogInformation("Session {SessionId} obtained (new={IsNew}) for tool '{ToolName}'", sessionInfo.SessionId, isNew, toolName);
-
-            if (connectionId != null)
-            {
-                _signalRegistry.RegisterConnectionBinding(sessionInfo.SessionId, connectionId);
-            }
-
-            // Step 4: Decide whether to start a fresh agent turn or continue draining
-            // an already-running one. A running turn's outbound signals accumulate in the
-            // registry's FIFO queue; subsequent dispatches simply drain that queue in
-            // order via WaitOutboundAsync. A new inbound reply, if supplied, is posted on
-            // the inbound channel so any parked blocking signaling tool can resume.
-            var existingTurn = isNew ? null : _sessionManager.GetRunningTurn(sessionInfo.SessionId);
-            var hasRunningTurn = existingTurn != null && !existingTurn.IsCompleted;
-
-            if (hasRunningTurn)
-            {
-                _logger.LogInformation("Reusing running turn for session {SessionId}", sessionInfo.SessionId);
-                _ = _sessionManager.GetActiveAgent(sessionInfo.SessionId)
-                    ?? throw new InvalidOperationException($"Session {sessionInfo.SessionId} has no active agent session");
-
-                if (toolContext.Input != null)
+                case TurnPhase.NewTurn:
                 {
-                    _signalRegistry.SignalInbound(sessionInfo.SessionId, SignalResult.Input(toolContext.Input));
-                }
-            }
-            else
-            {
-                // Step 5: Resolve prompt and start a fresh agent turn in the background.
-                string prompt;
-                try
-                {
-                    prompt = await _promptResolver.ResolveAsync(toolName, toolDef, toolContext.BoundParameters, ct);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Prompt resolution failed for tool '{ToolName}'", toolName);
-                    await _sessionManager.MarkCrashedAsync(sessionInfo.SessionId, ex, ct);
-                    return ToolResponse.Error($"Prompt resolution failed: {ex.Message}");
+                    var initErr = await StartNewTurnAsync(
+                        sessionInfo, isNew, toolName, toolDef, toolContext,
+                        agentConfig, signalingConfig, systemPromptConfig, config, ct);
+                    if (initErr != null) return initErr;
+                    break;
                 }
 
-                // Step 6: Create AI agent if new session, then kick off SendAsync as a
-                // background turn task owned by the session. We must NOT await it here
-                // because the agent may park inside a blocking signaling tool, and that
-                // tool needs the dispatcher to proceed to WaitOutboundAsync to drain the
-                // outbound signal it just posted.
-                IAgentSession agentSession;
-                try
+                case TurnPhase.Resume:
                 {
-                    if (isNew)
-                    {
-                        var toolSources = new List<AgentToolSource>();
-                        if (agentConfig.Tools != null && agentConfig.Tools.Count > 0)
-                        {
-                            foreach (var toolSourceKey in agentConfig.Tools)
-                            {
-                                if (config.AgentToolSources.TryGetValue(toolSourceKey, out var toolSource))
-                                {
-                                    toolSources.Add(toolSource);
-                                }
-                            }
-                        }
-
-                        var promptDirectory = Path.Combine(_configurationProvider.ConfigDirectory, "prompts");
-                        var signalingTools = SignalingToolFactory.CreateSignalingTools(
-                            sessionInfo.SessionId,
-                            signalingConfig,
-                            _signalRegistry,
-                            promptDirectory);
-
-                        agentSession = await _sessionManager.CreateAgentAsync(
-                            sessionInfo.SessionId,
-                            toolName,
-                            prompt,
-                            agentConfig,
-                            toolSources,
-                            signalingTools,
-                            ct);
-                    }
-                    else
-                    {
-                        agentSession = _sessionManager.GetActiveAgent(sessionInfo.SessionId)
-                            ?? throw new InvalidOperationException($"Session {sessionInfo.SessionId} has no active agent session");
-                    }
-
-                    // Subscribe to the outbound signal counter BEFORE invoking SendAsync so
-                    // that any signal the agent emits synchronously — including before the
-                    // first await yields — is counted. Failing to do so causes a race in
-                    // which a productive turn is misreported as "ended without signaling".
-                    var tracker = BeginTrackTurn(sessionInfo.SessionId);
-
-                    // For a brand-new session the prompt was already installed as the
-                    // system message when CreateAgentAsync ran. The first SendAsync only
-                    // needs to trigger the agent to start; sending the full prompt again
-                    // would duplicate it in the conversation context.
-                    var userMessage = isNew ? "Begin." : prompt;
-
-                    Task<string> turnTask;
-                    try
-                    {
-                        turnTask = agentSession.SendAsync(userMessage, ct);
-                    }
-                    catch
-                    {
-                        tracker.Detach(_signalRegistry);
-                        throw;
-                    }
-                    CompleteTrackTurn(sessionInfo.SessionId, turnTask, tracker);
-
-                    _logger.LogInformation("Prompt sent to session {SessionId}", sessionInfo.SessionId);
+                    _logger.LogInformation("Resuming blocked turn for session {SessionId}", sessionInfo.SessionId);
+                    var resumePayload = BuildResumePayload(toolDef, toolContext);
+                    _signalRegistry.SignalInbound(sessionInfo.SessionId, SignalResult.Input(resumePayload));
+                    break;
                 }
-                catch (Exception ex)
+
+                case TurnPhase.Rejoin:
                 {
-                    _logger.LogError(ex, "Failed to send prompt to session {SessionId}", sessionInfo.SessionId);
-                    await _sessionManager.MarkCrashedAsync(sessionInfo.SessionId, ex, ct);
-                    return ToolResponse.Error($"Failed to initialize agent session: {ex.Message}");
+                    _logger.LogInformation("Rejoining running turn for session {SessionId}", sessionInfo.SessionId);
+                    // Pure poll — nothing to post. Caller subscribes for the next outbound signal.
+                    break;
                 }
             }
 
@@ -294,6 +254,19 @@ public class ToolDispatcher : IToolDispatcher
                 SignalType.Input => ConvertInputSignal(signal.Data),
                 _ => ToolResponse.Error($"Unknown signal type: {signal.Type}")
             };
+
+            // Step 9a: If the turn is still running OR more outbound signals are
+            // already queued behind this one, demote a terminal 'complete' to
+            // 'partial' so the caller knows to invoke the tool again to keep
+            // draining (non-blocking streaming case, or agent contract violation
+            // where 'complete' was emitted before the final signal).
+            var turnAfterSignal = _sessionManager.GetRunningTurn(sessionInfo.SessionId);
+            var turnStillAlive = turnAfterSignal != null && !turnAfterSignal.IsCompleted;
+            var moreOutboundQueued = _signalRegistry.HasPendingOutbound(sessionInfo.SessionId);
+            if ((turnStillAlive || moreOutboundQueued) && response.Status == "complete")
+            {
+                response = ToolResponse.Partial(response.Message, response.Metadata);
+            }
 
             // Step 10: Fire hooks
             var responseMessage = response.Message ?? response.ErrorMessage ?? "Tool executed";
@@ -542,5 +515,229 @@ public class ToolDispatcher : IToolDispatcher
                     model, reasoningEffort, string.Join(", ", capabilities.SupportedReasoningLevels), toolName);
             }
         }
+    }
+
+    /// <summary>
+    /// Starts a fresh agent turn: resolves the tool prompt, optionally creates the
+    /// agent session (on first dispatch), wires the outbound-signal tracker, and kicks
+    /// off <see cref="IAgentSession.SendAsync"/> as a background turn task. The rendered
+    /// tool prompt is sent as the user message; the static system prompt (installed on
+    /// agent creation) governs tool-calling conventions only.
+    /// </summary>
+    /// <returns>
+    /// <c>null</c> on success, or an error <see cref="ToolResponse"/> that the caller
+    /// should return directly.
+    /// </returns>
+    private async Task<ToolResponse?> StartNewTurnAsync(
+        SessionInfo sessionInfo,
+        bool isNew,
+        string toolName,
+        ToolDefinition toolDef,
+        ToolCallContext toolContext,
+        AgentConfiguration agentConfig,
+        SignalingConfiguration signalingConfig,
+        SystemPromptConfiguration systemPromptConfig,
+        BridgeConfiguration config,
+        CancellationToken ct)
+    {
+        // Render the per-turn tool prompt (this is the user message).
+        string toolPrompt;
+        try
+        {
+            toolPrompt = await _promptResolver.ResolveAsync(toolName, toolDef, toolContext.BoundParameters, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Prompt resolution failed for tool '{ToolName}'", toolName);
+            await _sessionManager.MarkCrashedAsync(sessionInfo.SessionId, ex, ct);
+            return ToolResponse.Error($"Prompt resolution failed: {ex.Message}");
+        }
+
+        IAgentSession agentSession;
+        try
+        {
+            if (isNew)
+            {
+                // Resolve the static system prompt: inline Content XOR PromptFile.
+                string systemPromptText;
+                try
+                {
+                    systemPromptText = ResolveSystemPrompt(systemPromptConfig);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "System prompt resolution failed for tool '{ToolName}'", toolName);
+                    await _sessionManager.MarkCrashedAsync(sessionInfo.SessionId, ex, ct);
+                    return ToolResponse.Error($"System prompt resolution failed: {ex.Message}");
+                }
+
+                var toolSources = new List<AgentToolSource>();
+                if (agentConfig.Tools != null && agentConfig.Tools.Count > 0)
+                {
+                    foreach (var toolSourceKey in agentConfig.Tools)
+                    {
+                        if (config.AgentToolSources.TryGetValue(toolSourceKey, out var toolSource))
+                        {
+                            toolSources.Add(toolSource);
+                        }
+                    }
+                }
+
+                var promptDirectory = Path.Combine(_configurationProvider.ConfigDirectory, "prompts");
+                var signalingTools = SignalingToolFactory.CreateSignalingTools(
+                    sessionInfo.SessionId,
+                    signalingConfig,
+                    _signalRegistry,
+                    promptDirectory);
+
+                agentSession = await _sessionManager.CreateAgentAsync(
+                    sessionInfo.SessionId,
+                    toolName,
+                    systemPromptText,
+                    agentConfig,
+                    toolSources,
+                    signalingTools,
+                    ct);
+            }
+            else
+            {
+                agentSession = _sessionManager.GetActiveAgent(sessionInfo.SessionId)
+                    ?? throw new InvalidOperationException($"Session {sessionInfo.SessionId} has no active agent session");
+            }
+
+            // Subscribe to the outbound signal counter BEFORE invoking SendAsync so
+            // any signal the agent emits synchronously — including before the first
+            // await yields — is counted.
+            var tracker = BeginTrackTurn(sessionInfo.SessionId);
+
+            Task<string> turnTask;
+            try
+            {
+                turnTask = agentSession.SendAsync(toolPrompt, ct);
+            }
+            catch
+            {
+                tracker.Detach(_signalRegistry);
+                throw;
+            }
+            CompleteTrackTurn(sessionInfo.SessionId, turnTask, tracker);
+
+            _logger.LogInformation("Tool prompt sent to session {SessionId}", sessionInfo.SessionId);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to start agent turn for session {SessionId}", sessionInfo.SessionId);
+            await _sessionManager.MarkCrashedAsync(sessionInfo.SessionId, ex, ct);
+            return ToolResponse.Error($"Failed to start agent turn: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Resolves a <see cref="SystemPromptConfiguration"/> to its final text. Content and
+    /// PromptFile are mutually exclusive; exactly one must be set. PromptFile is resolved
+    /// relative to <see cref="IConfigurationProvider.ConfigDirectory"/> under
+    /// <c>prompts/</c>, with the same path-containment check as signaling tool prompts.
+    /// </summary>
+    private string ResolveSystemPrompt(SystemPromptConfiguration systemPromptConfig)
+    {
+        if (systemPromptConfig == null)
+            throw new ArgumentNullException(nameof(systemPromptConfig));
+
+        var hasContent = !string.IsNullOrEmpty(systemPromptConfig.Content);
+        var hasFile = !string.IsNullOrWhiteSpace(systemPromptConfig.PromptFile);
+
+        if (hasContent && hasFile)
+        {
+            throw new InvalidOperationException(
+                "SystemPromptConfiguration.Content and SystemPromptConfiguration.PromptFile are mutually exclusive; only one may be set.");
+        }
+        if (!hasContent && !hasFile)
+        {
+            throw new InvalidOperationException(
+                "SystemPromptConfiguration requires either Content or PromptFile to be set.");
+        }
+
+        if (hasContent)
+        {
+            return systemPromptConfig.Content!;
+        }
+
+        var promptDirectory = Path.Combine(_configurationProvider.ConfigDirectory, "prompts");
+        var normalized = systemPromptConfig.PromptFile!.Replace('\\', '/').TrimStart('/');
+        if (normalized.StartsWith("./", StringComparison.Ordinal))
+            normalized = normalized.Substring(2);
+        if (normalized.StartsWith("prompts/", StringComparison.OrdinalIgnoreCase))
+            normalized = normalized.Substring("prompts/".Length);
+
+        var fullPath = Path.GetFullPath(Path.Combine(promptDirectory, normalized));
+        var boundary = Path.GetFullPath(promptDirectory) + Path.DirectorySeparatorChar;
+        if (!fullPath.StartsWith(boundary, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"System prompt path '{systemPromptConfig.PromptFile}' resolves outside the prompts directory.");
+        }
+
+        if (!File.Exists(fullPath))
+        {
+            throw new FileNotFoundException(
+                $"System prompt file '{systemPromptConfig.PromptFile}' does not exist.", fullPath);
+        }
+
+        return File.ReadAllText(fullPath);
+    }
+
+    /// <summary>
+    /// Returns <c>true</c> when the caller's arguments carry a payload meant to
+    /// unblock a parked agent — either a value for any <see cref="ParameterKind.Resume"/>
+    /// parameter declared by the tool, or a non-empty reserved <c>_input</c>. Used
+    /// by phase detection so a Resume vs. Rejoin classification depends on the
+    /// caller's intent rather than on whether the agent has already registered an
+    /// inbound waiter (which is racy).
+    /// </summary>
+    private static bool CallerProvidedResumePayload(ToolDefinition toolDef, ToolCallContext peekContext)
+    {
+        if (toolDef.Parameters != null)
+        {
+            foreach (var kvp in toolDef.Parameters)
+            {
+                if (kvp.Value.Kind != ParameterKind.Resume)
+                    continue;
+                if (peekContext.BoundParameters.ContainsKey(kvp.Key))
+                    return true;
+            }
+        }
+
+        return !string.IsNullOrEmpty(peekContext.Input);
+    }
+
+    /// <summary>
+    /// Packs a payload for <see cref="TurnPhase.Resume"/> dispatches. When the tool
+    /// declares <see cref="ParameterKind.Resume"/> parameters, they are packed as a
+    /// JSON object so the parked signaling tool can unpack structured data. Otherwise
+    /// the caller's <c>_input</c> string (if any) is forwarded verbatim.
+    /// </summary>
+    private static object BuildResumePayload(ToolDefinition toolDef, ToolCallContext toolContext)
+    {
+        if (toolDef.Parameters != null)
+        {
+            var resumeParams = new Dictionary<string, JsonElement>();
+            foreach (var kvp in toolDef.Parameters)
+            {
+                if (kvp.Value.Kind != ParameterKind.Resume)
+                    continue;
+                if (toolContext.BoundParameters.TryGetValue(kvp.Key, out var value))
+                {
+                    resumeParams[kvp.Key] = value;
+                }
+            }
+
+            if (resumeParams.Count > 0)
+            {
+                return resumeParams;
+            }
+        }
+
+        return toolContext.Input ?? string.Empty;
     }
 }

@@ -329,3 +329,54 @@
     color: #b91c1c;
     border-radius: 4px;
 }
+
+/* ---- Merged ToolStart/ToolComplete row ---- */
+.transcript-entry.tool-call .entry-head {
+    align-items: center;
+}
+
+.tool-status {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+    margin-left: 4px;
+    flex-shrink: 0;
+}
+
+.tool-status--ok {
+    background: #dcfce7;
+    color: #15803d;
+    border: 1px solid #86efac;
+}
+
+.tool-status--error {
+    background: #fee2e2;
+    color: #b91c1c;
+    border: 1px solid #fca5a5;
+}
+
+.tool-status--pending {
+    background: #fef3c7;
+    color: #a16207;
+    border: 1px solid #fde68a;
+}
+
+.transcript-entry.tool-call--error {
+    border-left-color: #ef4444;
+}
+
+.transcript-entry.tool-call--pending {
+    border-left-color: #f59e0b;
+}
+
+.entry-details--tool-error {
+    background: #fef2f2;
+    color: #b91c1c;
+    border: 1px solid #fecaca;
+}

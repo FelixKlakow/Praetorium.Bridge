@@ -21,10 +21,22 @@ public class ParameterDefinition
     public string? Description { get; set; }
 
     /// <summary>
-    /// Whether this parameter is required.
+    /// Whether this parameter is required. Enforcement depends on the parameter's
+    /// <see cref="Kind"/> and the current dispatch <see cref="Tools.TurnPhase"/>:
+    /// <see cref="ParameterKind.Prompt"/> is only required on a fresh turn,
+    /// <see cref="ParameterKind.Resume"/> only when resuming a blocked session,
+    /// <see cref="ParameterKind.System"/> is never caller-required.
     /// </summary>
     [JsonPropertyName("required")]
     public bool Required { get; set; }
+
+    /// <summary>
+    /// Classification controlling when <see cref="Required"/> is enforced. Defaults
+    /// to <see cref="ParameterKind.Prompt"/>.
+    /// </summary>
+    [JsonPropertyName("kind")]
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public ParameterKind Kind { get; set; } = ParameterKind.Prompt;
 
     /// <summary>
     /// For array types, the schema of items in the array.

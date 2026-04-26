@@ -14,19 +14,19 @@ public class AgentContext
     /// Initializes a new instance of the AgentContext class.
     /// </summary>
     /// <param name="toolName">The name of the tool the agent is being spawned to handle.</param>
-    /// <param name="prompt">The system prompt for the agent.</param>
+    /// <param name="systemPrompt">The static system prompt (tool-calling conventions) for the agent.</param>
     /// <param name="agentConfiguration">The agent configuration.</param>
     /// <param name="toolSources">The MCP tool sources to connect to.</param>
     /// <param name="signalingTools">The signaling tool definitions available to the agent.</param>
     public AgentContext(
         string toolName,
-        string prompt,
+        string systemPrompt,
         AgentConfiguration agentConfiguration,
         List<AgentToolSource> toolSources,
         List<SignalingToolDefinition> signalingTools)
     {
         ToolName = toolName ?? throw new ArgumentNullException(nameof(toolName));
-        Prompt = prompt ?? throw new ArgumentNullException(nameof(prompt));
+        SystemPrompt = systemPrompt ?? throw new ArgumentNullException(nameof(systemPrompt));
         AgentConfiguration = agentConfiguration ?? throw new ArgumentNullException(nameof(agentConfiguration));
         ToolSources = toolSources ?? throw new ArgumentNullException(nameof(toolSources));
         SignalingTools = signalingTools ?? throw new ArgumentNullException(nameof(signalingTools));
@@ -38,9 +38,10 @@ public class AgentContext
     public string ToolName { get; }
 
     /// <summary>
-    /// Gets the system prompt for the agent.
+    /// Gets the static system prompt for the agent. Contains tool-calling conventions
+    /// only; detailed per-tool instructions are sent as the user message each turn.
     /// </summary>
-    public string Prompt { get; }
+    public string SystemPrompt { get; }
 
     /// <summary>
     /// Gets the agent configuration.

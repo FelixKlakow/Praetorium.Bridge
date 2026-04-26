@@ -116,15 +116,14 @@ public class CopilotAgentProvider : IAgentProvider
             SystemMessage = new SystemMessageConfig
             {
                 Mode = SystemMessageMode.Append,
-                Content = context.Prompt
+                Content = context.SystemPrompt
             },
             OnPermissionRequest = PermissionHandler.ApproveAll,
-            McpServers = new Dictionary<string, object>
+            McpServers = new Dictionary<string, McpServerConfig>
             {
-                ["praetorium-internal"] = new McpRemoteServerConfig
+                ["praetorium-internal"] = new McpHttpServerConfig
                 {
                     Url = _internalMcpEndpoint.Url,
-                    Type = "http",
                     Tools = ["*"],
                     Headers = new Dictionary<string, string>
                     {
@@ -247,7 +246,7 @@ public class CopilotAgentProvider : IAgentProvider
         {
             ModelName = model.Id,
             SupportsReasoningEffort = supportsReasoning,
-            SupportedReasoningLevels = model.SupportedReasoningEfforts ?? [],
+            SupportedReasoningLevels = (IReadOnlyList<string>?)model.SupportedReasoningEfforts ?? [],
             MaxTokens = maxTokens > 0 ? maxTokens : null,
             SupportsToolCalling = true,
             SupportsStreaming = true,

@@ -147,5 +147,6 @@ public class SessionManagerTests
     private sealed class FakeAgentSession : IAgentSession
     {
         public Task<string> SendAsync(string message, CancellationToken ct) => Task.FromResult("ok");
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }

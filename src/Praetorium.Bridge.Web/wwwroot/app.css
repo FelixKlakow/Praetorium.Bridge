@@ -249,6 +249,147 @@ a, .btn-link {
 }
 
 /* =============================================
+   Semantic Button Aliases
+   Components use these names; styles are defined
+   here once so all pages stay consistent.
+   ============================================= */
+.save-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 8px 18px;
+    background: var(--color-primary);
+    border: 1px solid var(--color-primary-hover);
+    border-radius: var(--border-radius-xs);
+    color: #ffffff;
+    font-family: var(--font-sans);
+    font-weight: 600;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+}
+
+.save-button:hover:not(:disabled) {
+    background: var(--color-primary-hover);
+    border-color: var(--color-primary-active);
+}
+
+.save-button:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.save-button.small {
+    padding: 4px 10px;
+    font-size: 11px;
+}
+
+.delete-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 8px 16px;
+    background: var(--color-danger-bg);
+    border: 1px solid var(--color-danger-border);
+    border-radius: var(--border-radius-xs);
+    color: var(--color-danger-text);
+    font-family: var(--font-sans);
+    font-weight: 500;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+}
+
+.delete-button:hover:not(:disabled) {
+    background: #fee2e2;
+    border-color: #fca5a5;
+}
+
+.cancel-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 8px 16px;
+    background: var(--surface-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-xs);
+    color: var(--text-secondary);
+    font-family: var(--font-sans);
+    font-weight: 500;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.cancel-button:hover:not(:disabled) {
+    background: var(--surface-muted);
+    border-color: var(--border-color-hover);
+    color: var(--text-primary);
+}
+
+.cancel-button:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.cancel-button.small {
+    padding: 4px 10px;
+    font-size: 11px;
+}
+
+.add-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 12px;
+    background: var(--surface-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-xs);
+    color: var(--text-secondary);
+    font-family: var(--font-sans);
+    font-weight: 600;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.add-button:hover:not(:disabled) {
+    background: var(--color-primary);
+    border-color: var(--color-primary-hover);
+    color: #ffffff;
+}
+
+.add-button:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.add-button.small {
+    padding: 3px 8px;
+    font-size: 11px;
+}
+
+.remove-button {
+    background: transparent;
+    border: none;
+    color: var(--text-tertiary);
+    font-size: 16px;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+    line-height: 1;
+    transition: color 0.15s, background 0.15s;
+}
+
+.remove-button:hover:not(:disabled) {
+    color: var(--color-danger);
+    background: var(--color-danger-bg);
+}
+
+/* =============================================
    Shared Form Styles
    ============================================= */
 .form-input,

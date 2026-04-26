@@ -192,12 +192,6 @@
     gap: 6px;
 }
 
-.save-button.small,
-.cancel-button.small {
-    padding: 4px 10px;
-    font-size: 11px;
-}
-
 .changes-group {
     padding: 10px 12px;
     border-bottom: 1px solid var(--border-color, #e2e8f0);
