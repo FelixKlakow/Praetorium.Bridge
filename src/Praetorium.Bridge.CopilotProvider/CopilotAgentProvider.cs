@@ -116,18 +116,20 @@ public class CopilotAgentProvider : IAgentProvider
             SystemMessage = new SystemMessageConfig
             {
                 Mode = SystemMessageMode.Append,
+
                 Content = context.SystemPrompt
             },
             OnPermissionRequest = PermissionHandler.ApproveAll,
-            McpServers = new Dictionary<string, McpServerConfig>
+            McpServers = new Dictionary<string, object>
             {
-                ["praetorium-internal"] = new McpHttpServerConfig
+                ["praetorium-internal"] = new McpRemoteServerConfig
                 {
                     Url = _internalMcpEndpoint.Url,
+                    Type = "http",
                     Tools = ["*"],
                     Headers = new Dictionary<string, string>
                     {
-                        ["Authorization"] = $"Bearer {bearerToken}",
+                        [InternalMcpEndpoint.BearerTokenHeaderName] = bearerToken,
                         [InternalMcpEndpoint.SessionHeaderName] = sessionKey
                     }
                 }

@@ -6,6 +6,7 @@
 @using Praetorium.Bridge.Web.Services
 @inject SessionActivityService Activity
 @inject ILogger<SessionView> Logger
+@inject IJSRuntime JS
 @implements IDisposable
 
 <PageTitle>Sessions - Praetorium.Bridge</PageTitle>
@@ -82,6 +83,11 @@
                             disabled="@(string.IsNullOrEmpty(selectedSessionId))">
                         Clear view
                     </button>
+                    <button class="save-button" @onclick="SaveTranscriptAsync"
+                            disabled="@(string.IsNullOrEmpty(selectedSessionId) || transcript.Count == 0 || isSaving)"
+                            title="Download the current session transcript as a JSON file for offline investigation">
+                        @(isSaving ? "Saving…" : "Save log")
+                    </button>
                 </div>
             </div>
 
@@ -114,17 +120,36 @@
                             completeEntry = transcript[completeIdx];
                         }
 
-                        if (isToolStart)
+                        if (isToolStart && IsThoughtTool(entry.Title))
+                        {
+                            var thoughtText = ExtractThoughtText(entry.Details) ?? entry.Details;
+                            <div class="transcript-entry agent agent-thought">
+                                <div class="entry-head">
+                                    <span class="entry-source">Agent</span>
+                                    <span class="entry-kind">Thought</span>
+                                    <span class="entry-title">@entry.Title</span>
+                                    <span class="entry-time">@entry.Timestamp.ToLocalTime().ToString("HH:mm:ss.fff")</span>
+                                </div>
+                                @if (!string.IsNullOrEmpty(thoughtText))
+                                {
+                                    <div class="entry-details entry-details--thought">@thoughtText</div>
+                                }
+                            </div>
+                        }
+                        else if (isToolStart)
                         {
                             var status = completeEntry is null
                                 ? "pending"
                                 : (completeEntry.Details?.Contains("success=False", StringComparison.Ordinal) == true
                                     ? "error"
                                     : "ok");
-                            <div class="transcript-entry agent tool-call tool-call--@status">
+                            toolPairs.StartToSignals.TryGetValue(i, out var signalIndices);
+                            var hasSignals = signalIndices != null && signalIndices.Count > 0;
+                            var toolCallClass = $"transcript-entry agent tool-call tool-call--{status}{(hasSignals ? " tool-call--signaling" : string.Empty)}";
+                            <div class="@toolCallClass">
                                 <div class="entry-head">
                                     <span class="entry-source">@entry.Source</span>
-                                    <span class="entry-kind">Tool</span>
+                                    <span class="entry-kind">@(hasSignals ? "Signaling tool" : "Tool")</span>
                                     @if (!string.IsNullOrEmpty(entry.Title))
                                     {
                                         <span class="entry-title">@entry.Title</span>
@@ -134,15 +159,67 @@
                                         @ToolStatusIcon(status)
                                     </span>
                                 </div>
-                                @if (!string.IsNullOrEmpty(entry.Details))
+                                @if (hasSignals)
                                 {
-                                    <pre class="entry-details">@entry.Details</pre>
+                                    <div class="tool-step">
+                                        <div class="tool-step-label">Parameters (agent → tool)</div>
+                                        @if (!string.IsNullOrEmpty(entry.Details))
+                                        {
+                                            <pre class="entry-details">@entry.Details</pre>
+                                        }
+                                        else
+                                        {
+                                            <div class="tool-step-empty">(no arguments)</div>
+                                        }
+                                    </div>
+                                    @foreach (var sIdx in signalIndices!)
+                                    {
+                                        var s = transcript[sIdx];
+                                        var direction = SignalingDirectionFromTitle(s.Title);
+                                        var label = SignalingStepLabel(direction, s.Kind);
+                                        <div class="tool-step tool-step--@(direction?.ToLowerInvariant() ?? "signal")">
+                                            <div class="tool-step-label">
+                                                <span class="tool-step-arrow">@SignalingArrow(direction)</span>
+                                                @label
+                                                <span class="tool-step-time">@s.Timestamp.ToLocalTime().ToString("HH:mm:ss.fff")</span>
+                                            </div>
+                                            @if (!string.IsNullOrEmpty(s.Details))
+                                            {
+                                                <pre class="entry-details">@s.Details</pre>
+                                            }
+                                            else
+                                            {
+                                                <div class="tool-step-empty">(no payload)</div>
+                                            }
+                                        </div>
+                                    }
+                                    @if (completeEntry is not null)
+                                    {
+                                        <div class="tool-step tool-step--complete">
+                                            <div class="tool-step-label">
+                                                <span class="tool-step-arrow">↩</span>
+                                                Returned to agent
+                                                <span class="tool-step-time">@completeEntry.Timestamp.ToLocalTime().ToString("HH:mm:ss.fff")</span>
+                                            </div>
+                                            @if (!string.IsNullOrEmpty(completeEntry.Details))
+                                            {
+                                                <pre class="entry-details @(status == "error" ? "entry-details--tool-error" : null)">@completeEntry.Details</pre>
+                                            }
+                                        </div>
+                                    }
                                 }
-                                @if (completeEntry is not null
-                                     && !string.IsNullOrEmpty(completeEntry.Details)
-                                     && status == "error")
+                                else
                                 {
-                                    <pre class="entry-details entry-details--tool-error">@completeEntry.Details</pre>
+                                    @if (!string.IsNullOrEmpty(entry.Details))
+                                    {
+                                        <pre class="entry-details">@entry.Details</pre>
+                                    }
+                                    @if (completeEntry is not null
+                                         && !string.IsNullOrEmpty(completeEntry.Details)
+                                         && status == "error")
+                                    {
+                                        <pre class="entry-details entry-details--tool-error">@completeEntry.Details</pre>
+                                    }
                                 }
                             </div>
                         }
@@ -171,6 +248,13 @@
                                             <pre class="entry-details entry-details--prompt">@entry.Details</pre>
                                         </details>
                                     }
+                                    else if (entry.Source == SessionTranscriptSource.Lifecycle && entry.Kind == "Turn Started")
+                                    {
+                                        <details class="entry-prompt-wrapper" open>
+                                            <summary class="entry-prompt-summary">Show tool prompt</summary>
+                                            <pre class="entry-details entry-details--prompt">@entry.Details</pre>
+                                        </details>
+                                    }
                                     else
                                     {
                                         <pre class="entry-details">@entry.Details</pre>
@@ -192,6 +276,7 @@
     private bool autoFollow = true;
     private bool isLoading;
     private bool isCancelling;
+    private bool isSaving;
     private string? lastError;
     private CancellationTokenSource? cts;
     private readonly HashSet<string> clearedLocally = new(StringComparer.Ordinal);
@@ -272,6 +357,40 @@
         }
     }
 
+    private async Task SaveTranscriptAsync()
+    {
+        if (string.IsNullOrEmpty(selectedSessionId) || transcript.Count == 0 || isSaving) return;
+        isSaving = true;
+        lastError = null;
+        try
+        {
+            var payload = new
+            {
+                sessionId = selectedSessionId,
+                exportedAt = DateTimeOffset.UtcNow,
+                entryCount = transcript.Count,
+                entries = transcript,
+            };
+            var json = System.Text.Json.JsonSerializer.Serialize(payload, new System.Text.Json.JsonSerializerOptions
+            {
+                WriteIndented = true,
+                Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() },
+            });
+            var filename = $"session-{selectedSessionId}-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}.json";
+            await JS.InvokeVoidAsync("praetoriumDownload", filename, json, "application/json");
+        }
+        catch (Exception ex)
+        {
+            lastError = ex.Message;
+            Logger.LogError(ex, "Save transcript failed.");
+        }
+        finally
+        {
+            isSaving = false;
+            StateHasChanged();
+        }
+    }
+
     private void OnEntryAdded(SessionTranscriptEntry entry)
     {
         if (entry.SessionId != selectedSessionId) return;
@@ -311,22 +430,48 @@
         _ => "other",
     };
 
-    private static string EntryKindClass(SessionTranscriptEntry entry) =>
-        entry.Source == SessionTranscriptSource.Agent && entry.Kind == nameof(AgentActivityKind.AssistantMessage)
-            ? "agent-message"
-            : string.Empty;
+    private static string EntryKindClass(SessionTranscriptEntry entry)
+    {
+        if (entry.Source == SessionTranscriptSource.Agent
+            && entry.Kind == nameof(AgentActivityKind.AssistantMessage))
+        {
+            return "agent-message";
+        }
+        if (entry.Source == SessionTranscriptSource.Agent
+            && entry.Kind == nameof(AgentActivityKind.Idle))
+        {
+            return "agent-idle";
+        }
+        if (entry.Source == SessionTranscriptSource.Lifecycle)
+        {
+            return entry.Kind switch
+            {
+                "Caller Invoked" => "lifecycle-caller",
+                "Turn Started" => "lifecycle-turn-start",
+                "Turn Ended" => "lifecycle-turn-end",
+                "Input Received" => "lifecycle-input-received",
+                "Spawned" or "Woken" => "lifecycle-session-up",
+                "Pooled" or "Dropped" => "lifecycle-session-down",
+                "Crashed" => "lifecycle-crashed",
+                _ => string.Empty,
+            };
+        }
+        return string.Empty;
+    }
 
     private readonly record struct ToolPairing(
         Dictionary<int, int> StartToComplete,
-        HashSet<int> SkipIndices);
+        HashSet<int> SkipIndices,
+        Dictionary<int, List<int>> StartToSignals);
 
     /// <summary>
     /// Builds a FIFO pairing between <see cref="AgentActivityKind.ToolStart"/> and
     /// <see cref="AgentActivityKind.ToolComplete"/> transcript entries that share
     /// the same tool name. Each ToolStart is paired with the next unmatched
-    /// ToolComplete for the same tool. Paired ToolComplete indices are returned
-    /// in <see cref="ToolPairing.SkipIndices"/> so the renderer collapses each
-    /// pair into a single visual row.
+    /// ToolComplete for the same tool. Signaling entries that fall inside a pair's
+    /// interval (or after a pending start) are attached to that start so the
+    /// renderer can present the full signaling exchange — outbound payload,
+    /// inbound callback, and final return — under a single tool-call row.
     /// </summary>
     private static ToolPairing BuildToolPairs(IReadOnlyList<SessionTranscriptEntry> entries)
     {
@@ -355,7 +500,106 @@
                 }
             }
         }
-        return new ToolPairing(pairs, skip);
+
+        var startToSignals = new Dictionary<int, List<int>>();
+        for (int i = 0; i < entries.Count; i++)
+        {
+            var s = entries[i];
+            if (s.Source != SessionTranscriptSource.Signaling) { continue; }
+
+            int? owner = null;
+            for (int k = 0; k < i; k++)
+            {
+                var ke = entries[k];
+                if (ke.Source != SessionTranscriptSource.Agent
+                    || ke.Kind != nameof(AgentActivityKind.ToolStart))
+                {
+                    continue;
+                }
+
+                var endIdx = pairs.TryGetValue(k, out var ce) ? ce : entries.Count;
+                if (endIdx > i && (owner == null || k > owner.Value))
+                {
+                    owner = k;
+                }
+            }
+
+            if (owner is int ownerIdx)
+            {
+                if (!startToSignals.TryGetValue(ownerIdx, out var list))
+                {
+                    list = new List<int>();
+                    startToSignals[ownerIdx] = list;
+                }
+                list.Add(i);
+                skip.Add(i);
+            }
+        }
+
+        return new ToolPairing(pairs, skip, startToSignals);
+    }
+
+    private static string? SignalingDirectionFromTitle(string? title)
+    {
+        if (string.IsNullOrEmpty(title)) return null;
+        var slash = title.IndexOf(' ');
+        return slash > 0 ? title[..slash] : title;
+    }
+
+    private static string SignalingStepLabel(string? direction, string kind) => direction switch
+    {
+        "Outbound" => $"Sent to caller ({kind})",
+        "Inbound" => $"Received from caller ({kind})",
+        _ => $"Signal ({kind})",
+    };
+
+    private static string SignalingArrow(string? direction) => direction switch
+    {
+        "Outbound" => "→",
+        "Inbound" => "←",
+        _ => "•",
+    };
+
+    private static readonly HashSet<string> ThoughtToolNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "report_intent",
+        "think",
+        "thought",
+        "report_thought",
+        "reasoning",
+    };
+
+    private static bool IsThoughtTool(string? toolName)
+    {
+        if (string.IsNullOrEmpty(toolName)) return false;
+        return ThoughtToolNames.Contains(toolName);
+    }
+
+    private static readonly string[] ThoughtFieldNames = { "intent", "thought", "summary", "reasoning", "message", "text" };
+
+    private static string? ExtractThoughtText(string? argumentsJson)
+    {
+        if (string.IsNullOrWhiteSpace(argumentsJson)) return null;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(argumentsJson);
+            if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object) return null;
+
+            foreach (var field in ThoughtFieldNames)
+            {
+                if (doc.RootElement.TryGetProperty(field, out var prop)
+                    && prop.ValueKind == System.Text.Json.JsonValueKind.String)
+                {
+                    var value = prop.GetString();
+                    if (!string.IsNullOrWhiteSpace(value)) return value;
+                }
+            }
+        }
+        catch
+        {
+            // Fall through — caller will display raw JSON.
+        }
+        return null;
     }
 
     private static string ToolStatusIcon(string status) => status switch

@@ -188,18 +188,18 @@ app.UseWhen(
         if (remote is null || !IPAddress.IsLoopback(remote))
         {
             ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
+            await ctx.Response.WriteAsync("Forbidden");
             return;
         }
 
         var sessionKey = ctx.Request.Headers[InternalMcpEndpoint.SessionHeaderName].ToString();
-        var authHeader = ctx.Request.Headers.Authorization.ToString();
-        const string bearerPrefix = "Bearer ";
-        if (string.IsNullOrEmpty(sessionKey) || !authHeader.StartsWith(bearerPrefix, StringComparison.Ordinal))
+        var bearer = ctx.Request.Headers[InternalMcpEndpoint.BearerTokenHeaderName].ToString();
+        if (string.IsNullOrEmpty(sessionKey) || string.IsNullOrEmpty(bearer))
         {
             ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            await ctx.Response.WriteAsync("Unauthorized");
             return;
         }
-        var bearer = authHeader.Substring(bearerPrefix.Length);
 
         var registry = ctx.RequestServices.GetRequiredService<IInternalMcpRegistry>();
         if (!registry.TryGet(sessionKey, out var entry)
@@ -208,6 +208,7 @@ app.UseWhen(
                 System.Text.Encoding.UTF8.GetBytes(entry.BearerToken)))
         {
             ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            await ctx.Response.WriteAsync("Unauthorized");
             return;
         }
 

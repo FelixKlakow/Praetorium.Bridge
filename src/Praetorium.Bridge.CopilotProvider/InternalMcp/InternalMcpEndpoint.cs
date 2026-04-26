@@ -16,6 +16,9 @@ public sealed class InternalMcpEndpoint
     /// <summary>The header carrying the opaque session key.</summary>
     public const string SessionHeaderName = "X-Praetorium-Session";
 
+    /// <summary>The header carrying the per-session bearer token.</summary>
+    public const string BearerTokenHeaderName = "X-Praetorium-Token";
+
     /// <summary>Initializes a new <see cref="InternalMcpEndpoint"/>.</summary>
     public InternalMcpEndpoint(int port)
     {

@@ -74,4 +74,16 @@ public class NullBridgeHooks : IBridgeHooks
     {
         return Task.CompletedTask;
     }
+
+    /// <inheritdoc />
+    public Task OnTurnStartedAsync(TurnStartedContext context, CancellationToken ct)
+    {
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    public Task OnTurnEndedAsync(TurnEndedContext context, CancellationToken ct)
+    {
+        return Task.CompletedTask;
+    }
 }

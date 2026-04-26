@@ -16,12 +16,28 @@ public class ToolInvocationContext : BridgeHookContext
     /// <param name="toolName">Name of the tool being invoked.</param>
     /// <param name="parameters">Parameters passed to the tool.</param>
     /// <param name="connectionId">ID of the connection making the invocation.</param>
-    public ToolInvocationContext(string correlationId, string toolName, Dictionary<string, object?> parameters, string connectionId)
+    /// <param name="sessionId">Session that the invocation was routed to (null if pre-session).</param>
+    /// <param name="referenceId">Reference ID used to look up the session, if any.</param>
+    /// <param name="phase">Turn phase the dispatcher selected (NewTurn / Resume / Rejoin).</param>
+    /// <param name="isNewSession">True when a brand-new session was spawned for this call.</param>
+    public ToolInvocationContext(
+        string correlationId,
+        string toolName,
+        Dictionary<string, object?> parameters,
+        string connectionId,
+        string? sessionId = null,
+        string? referenceId = null,
+        string? phase = null,
+        bool? isNewSession = null)
         : base(correlationId)
     {
         ToolName = toolName ?? throw new ArgumentNullException(nameof(toolName));
         Parameters = parameters ?? throw new ArgumentNullException(nameof(parameters));
         ConnectionId = connectionId ?? throw new ArgumentNullException(nameof(connectionId));
+        SessionId = sessionId;
+        ReferenceId = referenceId;
+        Phase = phase;
+        IsNewSession = isNewSession;
     }
 
     /// <summary>
@@ -38,6 +54,69 @@ public class ToolInvocationContext : BridgeHookContext
     /// Gets the connection ID of the client.
     /// </summary>
     public string ConnectionId { get; }
+
+    /// <summary>Gets the session that the invocation was routed to, if known.</summary>
+    public string? SessionId { get; }
+
+    /// <summary>Gets the caller-supplied reference ID used for session lookup.</summary>
+    public string? ReferenceId { get; }
+
+    /// <summary>Gets the dispatcher's chosen phase: NewTurn, Resume, or Rejoin.</summary>
+    public string? Phase { get; }
+
+    /// <summary>True when this invocation spawned a new agent session.</summary>
+    public bool? IsNewSession { get; }
+}
+
+/// <summary>
+/// Context for an agent turn beginning — emitted just before the agent's
+/// SendAsync is invoked so the dashboard can show the rendered tool prompt.
+/// </summary>
+public class TurnStartedContext : BridgeHookContext
+{
+    public TurnStartedContext(string correlationId, string sessionId, string toolName, string prompt, bool isNewSession)
+        : base(correlationId)
+    {
+        SessionId = sessionId ?? throw new ArgumentNullException(nameof(sessionId));
+        ToolName = toolName ?? throw new ArgumentNullException(nameof(toolName));
+        Prompt = prompt ?? throw new ArgumentNullException(nameof(prompt));
+        IsNewSession = isNewSession;
+    }
+
+    public string SessionId { get; }
+    public string ToolName { get; }
+    public string Prompt { get; }
+
+    /// <summary>True if the agent session itself is new; false if reusing an existing session.</summary>
+    public bool IsNewSession { get; }
+}
+
+/// <summary>
+/// Context for an agent turn ending — emitted when the turn task completes
+/// (cleanly, faulted, or cancelled).
+/// </summary>
+public class TurnEndedContext : BridgeHookContext
+{
+    public TurnEndedContext(string correlationId, string sessionId, string toolName, string outcome, long durationMs, string? detail = null)
+        : base(correlationId)
+    {
+        SessionId = sessionId ?? throw new ArgumentNullException(nameof(sessionId));
+        ToolName = toolName ?? throw new ArgumentNullException(nameof(toolName));
+        Outcome = outcome ?? throw new ArgumentNullException(nameof(outcome));
+        DurationMs = durationMs;
+        Detail = detail;
+    }
+
+    public string SessionId { get; }
+    public string ToolName { get; }
+
+    /// <summary>One of: Completed, Faulted, Cancelled, EmptyTurn.</summary>
+    public string Outcome { get; }
+
+    public long DurationMs { get; }
+
+    /// <summary>Optional human-readable detail (assistant text, error message).</summary>
+    public string? Detail { get; }
 }
 
 /// <summary>

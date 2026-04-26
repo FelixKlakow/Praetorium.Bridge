@@ -4,6 +4,7 @@
 @using Praetorium.Bridge.Web.Services
 @inject ConfigurationService ConfigService
 @inject IAgentProvider AgentProvider
+@inject IJSRuntime JS
 
 <div class="tool-editor">
     <div class="editor-header">
@@ -235,6 +236,7 @@
                 <div class="prompt-editor-layout">
                     <div class="prompt-main">
                         <textarea class="form-textarea prompt-textarea" rows="18"
+                                  @ref="_promptTextarea"
                                   value="@promptContent"
                                   @onchange="OnPromptContentChanged"
                                   placeholder="# @ToolName&#10;&#10;You are an agent that ..."></textarea>
@@ -517,6 +519,8 @@
     private string promptContent = string.Empty;
     private string? loadedPromptFile;
     private bool promptDirty;
+    private ElementReference _promptTextarea;
+    private int? _pendingCursorPosition;
 
     // System-prompt (static, installed on the agent session) editor state.
     // SystemPromptMode is derived from Tool.SystemPrompt and drives which sub-editor is shown.
@@ -888,11 +892,16 @@
     private List<string> FindUnknownPlaceholders() =>
         DetectedPlaceholders().Where(p => !IsKnownPlaceholder(p)).ToList();
 
-    private void InsertPlaceholder(string paramName)
+    private async Task InsertPlaceholder(string paramName)
     {
         var token = "{{" + ToPlaceholder(paramName) + "}}";
-        promptContent = (promptContent ?? string.Empty) + token;
+        int cursor;
+        try { cursor = await JS.InvokeAsync<int>("editorInterop.getCursorPosition", _promptTextarea); }
+        catch { cursor = (promptContent ?? string.Empty).Length; }
+        var content = promptContent ?? string.Empty;
+        promptContent = content.Substring(0, cursor) + token + content.Substring(cursor);
         promptDirty = true;
+        _pendingCursorPosition = cursor + token.Length;
     }
 
     private static string ToPlaceholder(string camelCase)
@@ -1138,5 +1147,16 @@
     async ValueTask IAsyncDisposable.DisposeAsync()
     {
         await Task.CompletedTask;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_pendingCursorPosition.HasValue)
+        {
+            var pos = _pendingCursorPosition.Value;
+            _pendingCursorPosition = null;
+            try { await JS.InvokeVoidAsync("editorInterop.setCursorPosition", _promptTextarea, pos); }
+            catch { }
+        }
     }
 }

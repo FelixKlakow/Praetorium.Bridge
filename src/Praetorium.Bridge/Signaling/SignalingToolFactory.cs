@@ -24,7 +24,11 @@ public static class SignalingToolFactory
     public const string JsonResponseFormat = "json";
     public const string MarkdownResponseFormat = "markdown";
 
-    private static readonly TimeSpan DefaultSignalWaitTimeout = TimeSpan.FromMinutes(5);
+    // Signaling tools wait indefinitely — they are released by the inbound signal,
+    // by an explicit Reset (dashboard cancel), by Disconnect, or by the session's
+    // cancellation token when the session is torn down. The IProgress<> keepalive
+    // pings the caller so it knows the bridge is still alive during the wait.
+    private static readonly TimeSpan DefaultSignalWaitTimeout = Timeout.InfiniteTimeSpan;
     private static readonly TimeSpan DefaultKeepaliveInterval = TimeSpan.FromSeconds(15);
 
     /// <summary>
@@ -65,129 +69,13 @@ public static class SignalingToolFactory
         return tools;
     }
 
+    /// <summary>
+    /// Builds a signaling tool from a config entry. Behavior is fully driven by the entry —
+    /// no name-based special cases. The well-known names (<see cref="RespondToolName"/>,
+    /// <see cref="RequestInputToolName"/>, <see cref="AwaitSignalToolName"/>) exist only as
+    /// default config templates the editor offers; the runtime treats every entry uniformly.
+    /// </summary>
     private static SignalingToolDefinition CreateTool(
-        string sessionId,
-        SignalingToolEntry entry,
-        ISignalRegistry signalRegistry,
-        string promptDirectory,
-        TimeSpan keepaliveInterval)
-    {
-        return entry.Name switch
-        {
-            RespondToolName => CreateRespondTool(sessionId, entry, signalRegistry, promptDirectory),
-            RequestInputToolName => CreateRequestInputTool(sessionId, entry, signalRegistry, promptDirectory, keepaliveInterval),
-            AwaitSignalToolName => CreateAwaitSignalTool(sessionId, entry, signalRegistry, keepaliveInterval),
-            _ => CreateCustomTool(sessionId, entry, signalRegistry, promptDirectory, keepaliveInterval),
-        };
-    }
-
-    private static SignalingToolDefinition CreateRespondTool(
-        string sessionId,
-        SignalingToolEntry entry,
-        ISignalRegistry signalRegistry,
-        string promptDirectory)
-    {
-        var schema = ConvertParametersToSchema(entry.Parameters);
-
-        Task<string> Handler(JsonElement parameters, IProgress<ProgressNotificationValue>? progress, CancellationToken ct)
-        {
-            _ = progress; // respond is non-blocking; no keepalive needed.
-
-            var message = parameters.TryGetProperty("message", out var msgProp)
-                ? msgProp.GetString()
-                : null;
-
-            if (string.IsNullOrEmpty(message))
-                return Task.FromResult("Error: 'message' parameter is required and must be a non-empty string.");
-
-            object? metadata = null;
-            if (parameters.TryGetProperty("metadata", out var metaProp) && metaProp.ValueKind != JsonValueKind.Null)
-            {
-                metadata = JsonSerializer.Deserialize<object>(metaProp.GetRawText());
-            }
-
-            var outgoing = IsMarkdown(entry.OutgoingFormat)
-                ? ToolResponse.Complete(RenderMarkdown(promptDirectory, entry.OutgoingPromptFile, parameters))
-                : ToolResponse.Complete(message, metadata);
-
-            signalRegistry.SignalOutbound(sessionId, SignalResult.Input(outgoing));
-            return Task.FromResult($"Response sent: {message}");
-        }
-
-        return new SignalingToolDefinition(entry.Name, entry.Description, schema, Handler);
-    }
-
-    private static SignalingToolDefinition CreateRequestInputTool(
-        string sessionId,
-        SignalingToolEntry entry,
-        ISignalRegistry signalRegistry,
-        string promptDirectory,
-        TimeSpan keepaliveInterval)
-    {
-        var schema = ConvertParametersToSchema(entry.Parameters);
-
-        async Task<string> Handler(JsonElement parameters, IProgress<ProgressNotificationValue>? progress, CancellationToken ct)
-        {
-            var question = parameters.TryGetProperty("question", out var qProp)
-                ? qProp.GetString()
-                : null;
-
-            if (string.IsNullOrEmpty(question))
-                return "Error: 'question' parameter is required and must be a non-empty string.";
-
-            List<string>? options = null;
-            if (parameters.TryGetProperty("options", out var optProp) && optProp.ValueKind == JsonValueKind.Array)
-            {
-                options = new List<string>();
-                foreach (var item in optProp.EnumerateArray())
-                {
-                    if (item.ValueKind == JsonValueKind.String)
-                        options.Add(item.GetString() ?? string.Empty);
-                }
-            }
-
-            // Outgoing payload: structured input_requested, or markdown-rendered question.
-            var outgoing = IsMarkdown(entry.OutgoingFormat)
-                ? ToolResponse.Complete(RenderMarkdown(promptDirectory, entry.OutgoingPromptFile, parameters))
-                : ToolResponse.InputRequested(question, options);
-
-            signalRegistry.SignalOutbound(sessionId, SignalResult.Input(outgoing));
-
-            var inputSignal = await WaitInboundWithKeepaliveAsync(
-                signalRegistry, sessionId, progress, keepaliveInterval, "waiting for caller input", ct)
-                .ConfigureAwait(false);
-
-            return FormatBlockingResponse(entry, inputSignal, promptDirectory);
-        }
-
-        return new SignalingToolDefinition(entry.Name, entry.Description, schema, Handler);
-    }
-
-    private static SignalingToolDefinition CreateAwaitSignalTool(
-        string sessionId,
-        SignalingToolEntry entry,
-        ISignalRegistry signalRegistry,
-        TimeSpan keepaliveInterval)
-    {
-        var schema = ConvertParametersToSchema(entry.Parameters);
-
-        async Task<string> Handler(JsonElement parameters, IProgress<ProgressNotificationValue>? progress, CancellationToken ct)
-        {
-            var signal = await WaitInboundWithKeepaliveAsync(
-                signalRegistry, sessionId, progress, keepaliveInterval, "waiting for caller signal", ct)
-                .ConfigureAwait(false);
-
-            return JsonSerializer.Serialize(new
-            {
-                type = signal.Type.ToString(),
-                data = signal.Data,
-            });
-        }
-
-        return new SignalingToolDefinition(entry.Name, entry.Description, schema, Handler);
-    }
-
-    private static SignalingToolDefinition CreateCustomTool(
         string sessionId,
         SignalingToolEntry entry,
         ISignalRegistry signalRegistry,

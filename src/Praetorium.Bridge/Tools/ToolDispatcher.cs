@@ -192,6 +192,19 @@ public class ToolDispatcher : IToolDispatcher
                     _logger.LogInformation("Resuming blocked turn for session {SessionId}", sessionInfo.SessionId);
                     var resumePayload = BuildResumePayload(toolDef, toolContext);
                     _signalRegistry.SignalInbound(sessionInfo.SessionId, SignalResult.Input(resumePayload));
+                    var inputText = resumePayload switch
+                    {
+                        string s => s,
+                        Dictionary<string, JsonElement> d => JsonSerializer.Serialize(d, new JsonSerializerOptions { WriteIndented = true }),
+                        _ => resumePayload?.ToString() ?? string.Empty,
+                    };
+                    await _hooks.OnInputReceivedAsync(
+                        new InputReceivedContext(
+                            Guid.NewGuid().ToString(),
+                            sessionInfo.SessionId,
+                            toolName,
+                            inputText),
+                        ct);
                     break;
                 }
 
@@ -211,7 +224,11 @@ public class ToolDispatcher : IToolDispatcher
                     Guid.NewGuid().ToString(),
                     toolName,
                     hookParams,
-                    connectionId ?? "unknown"),
+                    connectionId ?? "unknown",
+                    sessionId: sessionInfo.SessionId,
+                    referenceId: peekContext.ReferenceId,
+                    phase: phase.ToString(),
+                    isNewSession: isNew),
                 ct);
 
             // Step 8: Wait for the next outbound signal from the agent. External MCP
@@ -337,6 +354,8 @@ public class ToolDispatcher : IToolDispatcher
     private sealed class TurnTracker
     {
         public required string SessionId { get; init; }
+        public string ToolName { get; set; } = string.Empty;
+        public DateTimeOffset StartedAt { get; set; }
         public Action<SignalingEvent> Handler = _ => { };
         public int OutboundCount;
         public bool Detached;
@@ -393,6 +412,8 @@ public class ToolDispatcher : IToolDispatcher
                     _sessionManager.ClearRunningTurn(sessionId);
                 }
 
+                string outcome;
+                string? detail = null;
                 try
                 {
                     if (t.IsFaulted)
@@ -401,12 +422,15 @@ public class ToolDispatcher : IToolDispatcher
                         _logger.LogError(ex, "Agent turn faulted for session {SessionId}", sessionId);
                         _signalRegistry.SignalOutbound(sessionId, SignalResult.Input(
                             ToolResponse.Error($"Agent turn failed: {ex?.Message ?? "unknown error"}")));
+                        outcome = "Faulted";
+                        detail = ex?.Message;
                     }
                     else if (t.IsCanceled)
                     {
                         _logger.LogWarning("Agent turn was cancelled for session {SessionId}", sessionId);
                         _signalRegistry.SignalOutbound(sessionId, SignalResult.Input(
                             ToolResponse.Error("Agent turn was cancelled.")));
+                        outcome = "Cancelled";
                     }
                     else if (Volatile.Read(ref tracker.OutboundCount) == 0)
                     {
@@ -425,6 +449,8 @@ public class ToolDispatcher : IToolDispatcher
                                 sessionId);
                             _signalRegistry.SignalOutbound(sessionId, SignalResult.Input(
                                 ToolResponse.Complete(assistantText)));
+                            outcome = "Completed (no signal)";
+                            detail = assistantText;
                         }
                         else
                         {
@@ -433,12 +459,38 @@ public class ToolDispatcher : IToolDispatcher
                                 sessionId);
                             _signalRegistry.SignalOutbound(sessionId, SignalResult.Input(
                                 ToolResponse.Error("Agent ended its turn without calling any signaling tool.")));
+                            outcome = "EmptyTurn";
                         }
+                    }
+                    else
+                    {
+                        outcome = "Completed";
+                        if (!string.IsNullOrWhiteSpace(t.Result)) detail = t.Result;
                     }
                 }
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "Failed to post terminal signal for session {SessionId}", sessionId);
+                    outcome = "Faulted";
+                    detail = ex.Message;
+                }
+
+                try
+                {
+                    var durationMs = (long)(DateTimeOffset.UtcNow - tracker.StartedAt).TotalMilliseconds;
+                    _ = _hooks.OnTurnEndedAsync(
+                        new TurnEndedContext(
+                            Guid.NewGuid().ToString(),
+                            sessionId,
+                            tracker.ToolName,
+                            outcome,
+                            durationMs,
+                            detail),
+                        CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "OnTurnEndedAsync hook threw for session {SessionId}", sessionId);
                 }
             },
             CancellationToken.None,
@@ -609,6 +661,17 @@ public class ToolDispatcher : IToolDispatcher
             // any signal the agent emits synchronously — including before the first
             // await yields — is counted.
             var tracker = BeginTrackTurn(sessionInfo.SessionId);
+            tracker.ToolName = toolName;
+            tracker.StartedAt = DateTimeOffset.UtcNow;
+
+            await _hooks.OnTurnStartedAsync(
+                new TurnStartedContext(
+                    Guid.NewGuid().ToString(),
+                    sessionInfo.SessionId,
+                    toolName,
+                    toolPrompt,
+                    isNew),
+                ct);
 
             Task<string> turnTask;
             try

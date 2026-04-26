@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.SignalR;
@@ -98,7 +99,7 @@ public class DashboardBridgeHooks : IBridgeHooks
     /// </summary>
     public async Task OnToolInvokedAsync(ToolInvocationContext context, CancellationToken ct)
     {
-        var parameterNames = string.Join(", ", context.Parameters.Keys);
+        var parameterNames = string.Join(", ", context.Parameters.Keys.Order());
         var logEntry = new ActivityLogEntry(
             DateTimeOffset.UtcNow,
             context.ToolName,
@@ -107,7 +108,33 @@ public class DashboardBridgeHooks : IBridgeHooks
             $"Parameters: {parameterNames}");
 
         AddLogEntry(logEntry);
+
+        if (!string.IsNullOrEmpty(context.SessionId))
+        {
+            var phase = context.Phase ?? "?";
+            var sessionTag = context.IsNewSession == true ? "new session" : "reused session";
+            var details = $"phase={phase} ({sessionTag})\n{SerializeParameters(context.Parameters)}";
+            RaiseSessionLifecycle(context.SessionId!, "Caller Invoked", context.ToolName, details);
+        }
+
         await RaiseActivityLoggedAsync(logEntry, ct);
+    }
+
+    private static readonly JsonSerializerOptions ParamSerializerOptions = new()
+    {
+        WriteIndented = true,
+    };
+
+    private static string SerializeParameters(Dictionary<string, object?> parameters)
+    {
+        try
+        {
+            return JsonSerializer.Serialize(parameters, ParamSerializerOptions);
+        }
+        catch
+        {
+            return string.Join(", ", parameters.Select(kv => $"{kv.Key}={kv.Value}"));
+        }
     }
 
     /// <summary>
@@ -302,6 +329,28 @@ public class DashboardBridgeHooks : IBridgeHooks
 
         AddLogEntry(logEntry);
         await RaiseActivityLoggedAsync(logEntry, ct);
+    }
+
+    /// <inheritdoc />
+    public Task OnTurnStartedAsync(TurnStartedContext context, CancellationToken ct)
+    {
+        var sessionTag = context.IsNewSession ? "new session" : "continuing session";
+        RaiseSessionLifecycle(
+            context.SessionId,
+            "Turn Started",
+            context.ToolName,
+            $"({sessionTag})\n{context.Prompt}");
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    public Task OnTurnEndedAsync(TurnEndedContext context, CancellationToken ct)
+    {
+        var detail = string.IsNullOrEmpty(context.Detail)
+            ? $"{context.DurationMs}ms · {context.Outcome}"
+            : $"{context.DurationMs}ms · {context.Outcome}\n{context.Detail}";
+        RaiseSessionLifecycle(context.SessionId, "Turn Ended", context.ToolName, detail);
+        return Task.CompletedTask;
     }
 
     /// <summary>

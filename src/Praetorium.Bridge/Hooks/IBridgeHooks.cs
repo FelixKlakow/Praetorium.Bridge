@@ -96,4 +96,16 @@ public interface IBridgeHooks
     /// <param name="ct">Cancellation token.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     Task OnConfigReloadedAsync(ConfigReloadedContext context, CancellationToken ct);
+
+    /// <summary>
+    /// Called immediately before the dispatcher invokes <c>SendAsync</c> on the
+    /// agent for a new turn. Carries the rendered per-turn tool prompt so observers
+    /// can show the actual instructions handed to the agent.
+    /// </summary>
+    Task OnTurnStartedAsync(TurnStartedContext context, CancellationToken ct);
+
+    /// <summary>
+    /// Called when the agent turn task completes (cleanly, faulted, or cancelled).
+    /// </summary>
+    Task OnTurnEndedAsync(TurnEndedContext context, CancellationToken ct);
 }

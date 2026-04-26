@@ -2,6 +2,8 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -195,7 +197,7 @@ public sealed class SessionActivityService : IDisposable
     private void OnSignaled(SignalingEvent evt)
     {
         var title = $"{evt.Direction} / {evt.Type}";
-        var details = evt.Data?.ToString();
+        var details = SerializeSignalData(evt.Data);
 
         var transcript = new SessionTranscriptEntry(
             evt.Timestamp,
@@ -206,6 +208,27 @@ public sealed class SessionActivityService : IDisposable
             details);
 
         Append(transcript);
+    }
+
+    private static readonly JsonSerializerOptions SignalSerializerOptions = new()
+    {
+        WriteIndented = true,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        Converters = { new JsonStringEnumConverter() },
+    };
+
+    private static string? SerializeSignalData(object? data)
+    {
+        if (data == null) return null;
+        if (data is string s) return s;
+        try
+        {
+            return JsonSerializer.Serialize(data, SignalSerializerOptions);
+        }
+        catch
+        {
+            return data.ToString();
+        }
     }
 
     private void Append(SessionTranscriptEntry entry)
