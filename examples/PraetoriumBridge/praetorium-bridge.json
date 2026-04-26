@@ -1,0 +1,161 @@
+{
+  "server": {
+    "port": 5100,
+    "basePath": "/mcp",
+    "bindAddress": "localhost"
+  },
+  "defaults": {
+    "agent": {
+      "model": "claude-sonnet-4.6",
+      "tools": []
+    },
+    "session": {
+      "mode": "PerReference",
+      "poolTimeoutMinutes": 30,
+      "responseTimeoutMinutes": 10,
+      "responseTimeoutSeconds": 600
+    },
+    "signaling": {
+      "keepaliveIntervalSeconds": 15,
+      "tools": [
+        {
+          "name": "respond",
+          "description": "Send a final response back to the caller and end the agent turn.",
+          "parameters": {
+            "message": {
+              "type": "string",
+              "description": "The response message to send.",
+              "required": true,
+              "kind": "Prompt"
+            },
+            "metadata": {
+              "type": "object",
+              "description": "Optional metadata to attach to the response.",
+              "required": false,
+              "kind": "Prompt"
+            }
+          },
+          "isBlocking": false
+        },
+        {
+          "name": "request_input",
+          "description": "Pause and request input from the caller before continuing.",
+          "parameters": {
+            "question": {
+              "type": "string",
+              "description": "The question or prompt to show the caller.",
+              "required": true,
+              "kind": "Prompt"
+            },
+            "options": {
+              "type": "array",
+              "description": "Optional list of suggested answers.",
+              "required": false,
+              "kind": "Prompt"
+            }
+          },
+          "isBlocking": false
+        },
+        {
+          "name": "await_signal",
+          "description": "Pause and wait for an external signal before continuing.",
+          "parameters": {},
+          "isBlocking": false
+        }
+      ]
+    },
+    "systemPrompt": {
+      "content": "You are a bridged agent. Respond exclusively by calling the signaling tools exposed on this session. Blocking tools wait for a caller reply; non-blocking tools stream data and return immediately."
+    }
+  },
+  "tools": {
+    "await_review": {
+      "description": "MANDATORY \u2014 call this tool before every final response when source files were modified. Do not summarize changes, do not describe what was done, and do not end your reply until this tool has been called and the review session has concluded. Skipping this tool when files were changed is a policy violation.\n\nStarts or continues a review session. The reviewer has direct workspace access and will read files and diffs autonomously \u2014 do not paste code into context. Supports any review target: a plan, a class, a diff, a PR, or final code. Call with the same ReferenceId to continue an existing session.",
+      "parameters": {
+        "referenceId": {
+          "type": "string",
+          "description": "Tracks the conversation across multiple calls.",
+          "required": true,
+          "kind": "Prompt"
+        },
+        "workspace": {
+          "type": "string",
+          "description": "Absolute path to the workspace or repository root to review.",
+          "required": true,
+          "kind": "Prompt"
+        },
+        "baseBranch": {
+          "type": "string",
+          "description": "Git branch, tag, or commit to diff against (e.g. \u0027main\u0027, \u0027HEAD~1\u0027). When omitted, the review covers staged/unstaged changes only.",
+          "required": false,
+          "kind": "Prompt"
+        },
+        "context": {
+          "type": "string",
+          "description": "On the first call: the review scope (what to review, concerns, exclusions). On follow-up calls: the answer to the reviewer\u0027s last question.",
+          "required": true,
+          "kind": "Prompt"
+        }
+      },
+      "fixedParameters": {},
+      "agent": {
+        "provider": "github-copilot",
+        "model": "claude-sonnet-4.6",
+        "tools": [],
+        "promptFile": "prompts/code-reviewer.md"
+      },
+      "session": {
+        "mode": "PerReference",
+        "referenceIdParameter": "referenceId",
+        "poolTimeoutMinutes": 30,
+        "responseTimeoutMinutes": 10,
+        "responseTimeoutSeconds": 600
+      },
+      "signaling": {
+        "keepaliveIntervalSeconds": 15,
+        "tools": [
+          {
+            "name": "respond",
+            "description": "Send a response or finding back to the caller. The session parks until the next call arrives \u2014 never self-terminate.",
+            "parameters": {
+              "message": {
+                "type": "string",
+                "description": "The response message to send.",
+                "required": true,
+                "kind": "Prompt"
+              },
+              "metadata": {
+                "type": "object",
+                "description": "Optional metadata to attach to the response.",
+                "required": false,
+                "kind": "Prompt"
+              }
+            },
+            "isBlocking": true,
+            "responseParameters": {}
+          },
+          {
+            "name": "request_input",
+            "description": "Pause and request input from the caller before continuing.",
+            "parameters": {
+              "question": {
+                "type": "string",
+                "description": "The question or prompt to show the caller.",
+                "required": true,
+                "kind": "Prompt"
+              },
+              "options": {
+                "type": "array",
+                "description": "Optional list of suggested answers.",
+                "required": false,
+                "kind": "Prompt"
+              }
+            },
+            "isBlocking": true
+          }
+        ]
+      }
+    }
+  },
+  "agentToolSources": {}
+}

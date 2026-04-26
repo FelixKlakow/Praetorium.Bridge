@@ -1,168 +1,74 @@
 # Praetorium.Bridge
 
-> **Turn any AI agent into a callable MCP tool — with configurable signaling, session management, and prompt templates.**
+> **Turn an AI agent into a callable MCP tool — and let two agents have a real conversation through it.**
 
-Praetorium.Bridge is a .NET 10 bridge that exposes user-defined [Model Context Protocol](https://modelcontextprotocol.io) tools over HTTP, routes each call to a pooled AI agent session, and gives you a Blazor dashboard for monitoring and live configuration. Tools are declared in JSON — no code changes, no redeploys.
+Praetorium.Bridge is a .NET 10 server that publishes AI-agent-backed tools over the [Model Context Protocol](https://modelcontextprotocol.io). You describe each tool in JSON — its inputs, its agent, its prompt — and the bridge spawns the agent, keeps its session alive across calls, and surfaces the whole thing in a live dashboard.
 
-> **Status:** `0.1.0` — prerelease. Interfaces, schema, and UI are stabilizing; expect breaking changes.
+What sets it apart from a one-shot LLM call wrapped behind an MCP endpoint:
+
+- **Real-time agent-to-agent dialogue.** A signaling tool inside the agent's session can park the caller, hand control back to the agent for follow-up, and resume — so an agent calling the bridge can ask clarifying questions, request more context, and respond, all in one logical exchange instead of a stateless request/response.
+- **Sessions that survive across calls.** A code-review tool, for instance, holds the same agent through every clarification round of the same review (`per-reference` mode) — the model keeps its context, you don't pay to re-prime it, and the conversation actually progresses instead of restarting.
+
+The goal is to make it boring to expose an agent as a tool: no glue code, no per-tool wiring, no redeploys.
+
+> **Status:** `0.1.0` — prerelease. Interfaces, schema, and UI are still moving.
 
 ---
 
-## What it does
+## How it works
 
-```
-External MCP caller ──HTTP──▶ Bridge MCP server ──▶ Tool dispatcher
-                                                         │
-                                                         ▼
-                                                Session manager
-                                                         │
-                                                         ▼
-                                      Agent provider (GitHub Copilot SDK)
-                                                         │
-                                                         ▼
-                                     Agent session  ◀──▶  Signaling tools
-                                                         │
-                                                         ▼
-                              Agent-side MCP tools (filesystem, git, …)
+```mermaid
+flowchart LR
+    Caller[MCP caller<br/>e.g. another agent] -->|HTTP| Bridge[Praetorium.Bridge]
+    Bridge --> Session[Pooled agent session]
+    Session <-->|signaling tools| Bridge
 ```
 
-Each external MCP tool is backed by an AI agent. The bridge handles the parts everyone re-invents:
+A caller invokes a tool over HTTP. The bridge routes it to the right agent session — spawning a new one or reusing a pooled one based on the tool's session mode — and the agent runs until it hits a *signaling tool*. Non-blocking signaling tools stream a payload back and let the agent keep going; blocking ones park the agent's turn until the caller replies on the same MCP call, enabling a true back-and-forth without losing session state.
 
-- **Sessions** — spawn, pool, health-monitor, and recover crashed agents
-- **Signaling** — block the external caller until the agent signals a structured reply
-- **Configuration** — tool definitions, prompts, signaling contracts, session modes, timeouts — all in one JSON file, hot-reloaded
-- **Monitoring** — live dashboard of active sessions, activity logs, and a Config Agent that edits the configuration conversationally
+Everything that varies between tools — the agent backend, the prompt, the parameter schema, the session lifetime, the signaling contract — lives in `praetorium-bridge.json` and hot-reloads.
 
 ---
 
-## Projects
-
-| Project | Purpose |
-|---|---|
-| `Praetorium.Bridge` | Core library: session lifecycle, signaling, tool dispatch, MCP server builder |
-| `Praetorium.Bridge.CopilotProvider` | `IAgentProvider` implementation backed by the GitHub Copilot SDK |
-| `Praetorium.Bridge.Web` | ASP.NET Core + Blazor Server dashboard, configuration/prompt editor, SignalR session monitoring, Config Agent |
-
----
-
-## Getting started
-
-### Prerequisites
-
-- .NET 10 SDK
-- Access to a GitHub Copilot–compatible endpoint (the bundled provider uses the [GitHub Copilot SDK](https://github.com/github/copilot-sdk))
-
-### Build and run
+## Quick start
 
 ```bash
-# Build
-dotnet build
-
-# Run the web app (dashboard + MCP HTTP endpoint on port 5100)
 dotnet run --project src/Praetorium.Bridge.Web
 ```
 
-Open <http://localhost:5100> for the dashboard. The MCP HTTP endpoint is served under the `basePath` defined in `praetorium-bridge.json` (default `/mcp`).
+`dotnet run` will print the bound URL (the launch profile defaults to <http://localhost:5067>); the dashboard is served at `/`, the MCP endpoint at `/mcp`. Override with `ASPNETCORE_URLS` or by editing `Properties/launchSettings.json`.
 
-### Point an MCP client at the bridge
+On first launch the bridge reads `praetorium-bridge.json` from:
 
-Configure your MCP caller (Claude Desktop, Copilot, or another bridge) to connect to:
-
-```
-http://localhost:5100/mcp
-```
-
-Tools defined in `praetorium-bridge.json` appear automatically. Adding or removing a tool in the JSON (or via the dashboard) is picked up without a restart.
-
----
-
-## Configuration
-
-Everything is declared in `praetorium-bridge.json` at the repo root. A JSON Schema (`praetorium-bridge.schema.json`) is shipped alongside it so editors can validate and autocomplete.
-
-Top-level sections:
-
-| Section | Purpose |
+| OS | Path |
 |---|---|
-| `server` | HTTP port, base path, bind address |
-| `defaults` | Fallback agent, session, and signaling config inherited by every tool |
-| `agentToolSources` | Named MCP tool sources (stdio command or HTTP URL) that agents can use |
-| `tools` | The external MCP tools exposed to callers, each mapped to an agent + prompt + signaling contract |
+| Windows | `%APPDATA%\PraetoriumBridge\` |
+| Linux / macOS | `~/.config/PraetoriumBridge/` |
 
-### Session modes
+A working starter config lives in [`examples/PraetoriumBridge/`](examples/) — copy it into the path above, then point any MCP client (Claude Desktop, Copilot, another bridge) at the endpoint.
 
-| Mode | Behavior |
-|---|---|
-| `per-connection` | A new session per MCP transport connection (default) |
-| `per-reference` | Sessions are pooled and reused by a caller-supplied reference ID |
-| `global` | A single shared session for all callers |
-
-### Prompt templates
-
-Prompts live as Markdown files under `prompts/`. They support `{{PLACEHOLDER}}`, `{{#if}}`, `{{#each}}`, and `{{ENV:VAR}}` substitutions and are validated on load. The dashboard's prompt editor highlights unknown placeholders.
-
-See `praetorium-bridge-design.md` (1100+ lines) for the full design reference.
+**Prerequisites:** .NET 10 SDK, and access to a GitHub Copilot–compatible endpoint for the bundled provider.
 
 ---
 
-## Dashboard features
+## What's in the box
 
-Served from the web project at `/`.
+- **`Praetorium.Bridge`** — the core library: session lifecycle, signaling, tool dispatch, hot-reload
+- **`Praetorium.Bridge.CopilotProvider`** — agent provider backed by the GitHub Copilot SDK
+- **`Praetorium.Bridge.Web`** — Blazor dashboard with a configuration editor, prompt editor, live session view, and a Config Agent that edits the JSON for you
 
-- **Live dashboard** — active sessions, spawn/crash events, per-tool counters
-- **Activity log** — streaming view of tool calls and agent events via SignalR
-- **Configuration editor** — create/edit/delete tools, agent sources, and defaults with a form UI backed by the JSON schema
-- **Prompt editor** — edit prompt templates with placeholder detection and inline parameter insertion
-- **Signaling tool editor** — wire up default and custom signaling contracts per tool
-- **Config Agent** — chat with an AI agent that stages configuration changes for you; diffs are shown before you apply them
+The core library is built around replaceable abstractions (`IAgentProvider`, `IAgentSession`, `ISessionStore`, `ISignalRegistry`, `IConfigurationProvider`, `IBridgeHooks`) so you can swap in a different LLM backend, persistent session store, or alternate config source.
 
----
-
-## Repository layout
-
-```
-praetorium-bridge/
-├── praetorium-bridge.json         # Runtime configuration
-├── praetorium-bridge.schema.json  # JSON schema for the config
-├── praetorium-bridge-design.md    # Full design document
-├── prompts/                       # Markdown prompt templates
-└── src/
-    ├── Praetorium.Bridge/                # Core library
-    ├── Praetorium.Bridge.CopilotProvider/ # Copilot-backed IAgentProvider
-    └── Praetorium.Bridge.Web/            # Blazor dashboard + MCP HTTP host
-```
+The schema for `praetorium-bridge.json` is in [`praetorium-bridge.schema.json`](praetorium-bridge.schema.json) (drop it into your editor's JSON schema settings for autocomplete). The full design — session modes, signaling contracts, prompt templating, the lot — is in [`praetorium-bridge-design.md`](praetorium-bridge-design.md).
 
 ---
 
-## Extension points
+## Roadmap
 
-The core library is built around a handful of abstractions you can replace:
+For `0.2+`:
 
-| Interface | Default | Replace to… |
-|---|---|---|
-| `IAgentProvider` | `CopilotProvider` | plug in a different LLM backend |
-| `IAgentSession` | provider-specific | customize per-session behavior |
-| `ISessionStore` | in-memory | persist sessions across restarts |
-| `ISignalRegistry` | `ConcurrentDictionary` | change how agent↔bridge signals are routed |
-| `IConfigurationProvider` | file-watched JSON | source config from a database, KMS, etc. |
-| `IBridgeHooks` | no-op | observe 11 lifecycle events (spawned, pooled, crashed, input_requested, …) |
-
----
-
-## Roadmap / future work
-
-Short list of things on the radar for `0.2+`:
-
-- **Additional `IAgentProvider` implementations** beyond GitHub Copilot — Anthropic, OpenAI, Azure OpenAI, local models
-- **Test projects** — the repo currently ships no unit/integration tests
-- **Linting / formatting** — add an `.editorconfig` + analyzer package set
-- **Authentication** — dashboard is currently unauthenticated; add SSO / API-key auth
-- **Remote API access** — expose a read/write HTTP API for configuration so the dashboard can be detached from the bridge host
-- **Docker & deployment** — Dockerfile, compose example, Helm chart
-- **Enhanced hot-reload** — currently JSON-driven; extend to prompt-only and signaling-only reloads without replaying sessions
-- **Streaming improvements** — partial/streamed tool results from agents back to callers
-- **Persistent session store** — Redis/SQL-backed `ISessionStore` for multi-node deployments
-- **Crash-replay** — replay a crashed session's inbound calls against a freshly spawned session
+- More `IAgentProvider` implementations (Anthropic, OpenAI, Azure OpenAI, local models)
+- Dashboard authentication
 
 Contributions, bug reports, and design feedback are welcome.
 
@@ -170,4 +76,4 @@ Contributions, bug reports, and design feedback are welcome.
 
 ## License
 
-See `LICENSE.txt`.
+See [`LICENSE.txt`](LICENSE.txt).
