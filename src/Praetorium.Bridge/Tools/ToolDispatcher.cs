@@ -29,6 +29,7 @@ public class ToolDispatcher : IToolDispatcher
     /// specify an explicit keepalive interval.
     /// </summary>
     private static readonly TimeSpan DefaultKeepaliveInterval = TimeSpan.FromSeconds(15);
+    private static readonly JsonSerializerOptions ResumePayloadOptions = new() { WriteIndented = true };
 
     private readonly IConfigurationProvider _configurationProvider;
     private readonly ISessionManager _sessionManager;
@@ -126,10 +127,14 @@ public class ToolDispatcher : IToolDispatcher
 
             // Step 4: Determine the turn phase from session state and caller payload.
             //   NewTurn — no running turn (or previous one ended).
-            //   Resume  — a running turn AND the caller supplied a payload (resume params
-            //             or _input). Posting on a not-yet-registered inbound waiter is
-            //             safe: SignalRegistry buffers FIFO until the agent reads it.
-            //   Rejoin  — a running turn AND the caller supplied no payload (pure poll).
+            //   Resume  — a running turn AND the caller supplied a resume-eligible
+            //             payload (Resume / PromptAndResume parameter, _input, or in
+            //             PerConnection mode any Prompt parameter — see
+            //             CallerProvidedResumePayload). Posting on a not-yet-registered
+            //             inbound waiter is safe: SignalRegistry buffers FIFO until
+            //             the agent reads it.
+            //   Rejoin  — a running turn AND the caller supplied no resume-eligible
+            //             payload (pure poll).
             //
             // NOTE: The phase MUST NOT depend on whether the agent has already registered
             // an inbound waiter. Between the agent emitting an outbound signal and the
@@ -143,7 +148,7 @@ public class ToolDispatcher : IToolDispatcher
             {
                 phase = TurnPhase.NewTurn;
             }
-            else if (CallerProvidedResumePayload(toolDef, peekContext))
+            else if (CallerProvidedResumePayload(toolDef, peekContext, sessionMode, sessionConfig.TreatPromptAsResume))
             {
                 phase = TurnPhase.Resume;
             }
@@ -190,12 +195,12 @@ public class ToolDispatcher : IToolDispatcher
                 case TurnPhase.Resume:
                 {
                     _logger.LogInformation("Resuming blocked turn for session {SessionId}", sessionInfo.SessionId);
-                    var resumePayload = BuildResumePayload(toolDef, toolContext);
+                    var resumePayload = BuildResumePayload(toolDef, toolContext, sessionMode, sessionConfig.TreatPromptAsResume);
                     _signalRegistry.SignalInbound(sessionInfo.SessionId, SignalResult.Input(resumePayload));
                     var inputText = resumePayload switch
                     {
                         string s => s,
-                        Dictionary<string, JsonElement> d => JsonSerializer.Serialize(d, new JsonSerializerOptions { WriteIndented = true }),
+                        Dictionary<string, JsonElement> d => JsonSerializer.Serialize(d, ResumePayloadOptions),
                         _ => resumePayload?.ToString() ?? string.Empty,
                     };
                     await _hooks.OnInputReceivedAsync(
@@ -236,10 +241,9 @@ public class ToolDispatcher : IToolDispatcher
             // keepalive progress notifications. The wait races the running turn so a
             // clean turn end without any outbound signal is reported as an error
             // instead of hanging forever.
-            var responseTimeoutSeconds = sessionConfig.ResponseTimeoutSeconds > 0
-                ? sessionConfig.ResponseTimeoutSeconds
-                : 600;
-            var timeout = TimeSpan.FromSeconds(responseTimeoutSeconds);
+            var timeout = sessionConfig.ResponseTimeoutSeconds > 0
+                ? TimeSpan.FromSeconds(sessionConfig.ResponseTimeoutSeconds)
+                : Timeout.InfiniteTimeSpan;
             var keepaliveInterval = signalingConfig.KeepaliveIntervalSeconds > 0
                 ? TimeSpan.FromSeconds(signalingConfig.KeepaliveIntervalSeconds)
                 : DefaultKeepaliveInterval;
@@ -478,7 +482,7 @@ public class ToolDispatcher : IToolDispatcher
                 try
                 {
                     var durationMs = (long)(DateTimeOffset.UtcNow - tracker.StartedAt).TotalMilliseconds;
-                    _ = _hooks.OnTurnEndedAsync(
+                    var hookTask = _hooks.OnTurnEndedAsync(
                         new TurnEndedContext(
                             Guid.NewGuid().ToString(),
                             sessionId,
@@ -487,10 +491,15 @@ public class ToolDispatcher : IToolDispatcher
                             durationMs,
                             detail),
                         CancellationToken.None);
+                    _ = hookTask.ContinueWith(
+                        t => _logger.LogWarning(t.Exception, "OnTurnEndedAsync hook threw for session {SessionId}", sessionId),
+                        CancellationToken.None,
+                        TaskContinuationOptions.OnlyOnFaulted,
+                        TaskScheduler.Default);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "OnTurnEndedAsync hook threw for session {SessionId}", sessionId);
+                    _logger.LogWarning(ex, "OnTurnEndedAsync hook threw synchronously for session {SessionId}", sessionId);
                 }
             },
             CancellationToken.None,
@@ -664,14 +673,21 @@ public class ToolDispatcher : IToolDispatcher
             tracker.ToolName = toolName;
             tracker.StartedAt = DateTimeOffset.UtcNow;
 
-            await _hooks.OnTurnStartedAsync(
-                new TurnStartedContext(
-                    Guid.NewGuid().ToString(),
-                    sessionInfo.SessionId,
-                    toolName,
-                    toolPrompt,
-                    isNew),
-                ct);
+            try
+            {
+                await _hooks.OnTurnStartedAsync(
+                    new TurnStartedContext(
+                        Guid.NewGuid().ToString(),
+                        sessionInfo.SessionId,
+                        toolName,
+                        toolPrompt,
+                        isNew),
+                    ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "OnTurnStartedAsync hook threw for session {SessionId}", sessionInfo.SessionId);
+            }
 
             Task<string> turnTask;
             try
@@ -752,19 +768,30 @@ public class ToolDispatcher : IToolDispatcher
 
     /// <summary>
     /// Returns <c>true</c> when the caller's arguments carry a payload meant to
-    /// unblock a parked agent — either a value for any <see cref="ParameterKind.Resume"/>
-    /// parameter declared by the tool, or a non-empty reserved <c>_input</c>. Used
-    /// by phase detection so a Resume vs. Rejoin classification depends on the
-    /// caller's intent rather than on whether the agent has already registered an
-    /// inbound waiter (which is racy).
+    /// unblock a parked agent. Always honors a non-empty reserved <c>_input</c>
+    /// or any value supplied for a <see cref="ParameterKind.Resume"/> /
+    /// <see cref="ParameterKind.PromptAndResume"/> parameter declared by the
+    /// tool. Plain <see cref="ParameterKind.Prompt"/> parameters become
+    /// resume-eligible when either (a) the tool opts in via
+    /// <see cref="SessionConfiguration.TreatPromptAsResume"/>, or (b) the
+    /// session mode is <see cref="SessionMode.PerConnection"/> (where the
+    /// session is owned by exactly one external caller, so reusing the same
+    /// Prompt-kind parameters is unambiguous resume input). Used by phase
+    /// detection so a Resume vs. Rejoin classification depends on the
+    /// caller's intent rather than on whether the agent has already
+    /// registered an inbound waiter (which is racy).
     /// </summary>
-    private static bool CallerProvidedResumePayload(ToolDefinition toolDef, ToolCallContext peekContext)
+    private static bool CallerProvidedResumePayload(
+        ToolDefinition toolDef,
+        ToolCallContext peekContext,
+        SessionMode sessionMode,
+        bool treatPromptAsResume)
     {
         if (toolDef.Parameters != null)
         {
             foreach (var kvp in toolDef.Parameters)
             {
-                if (kvp.Value.Kind != ParameterKind.Resume)
+                if (!IsResumeEligibleKind(kvp.Value.Kind, sessionMode, treatPromptAsResume))
                     continue;
                 if (peekContext.BoundParameters.ContainsKey(kvp.Key))
                     return true;
@@ -775,19 +802,27 @@ public class ToolDispatcher : IToolDispatcher
     }
 
     /// <summary>
-    /// Packs a payload for <see cref="TurnPhase.Resume"/> dispatches. When the tool
-    /// declares <see cref="ParameterKind.Resume"/> parameters, they are packed as a
-    /// JSON object so the parked signaling tool can unpack structured data. Otherwise
-    /// the caller's <c>_input</c> string (if any) is forwarded verbatim.
+    /// Packs a payload for <see cref="TurnPhase.Resume"/> dispatches. Includes
+    /// every parameter whose kind is resume-eligible for the active
+    /// <paramref name="sessionMode"/> and <paramref name="treatPromptAsResume"/>
+    /// flag (always <see cref="ParameterKind.Resume"/> and
+    /// <see cref="ParameterKind.PromptAndResume"/>; additionally
+    /// <see cref="ParameterKind.Prompt"/> when the tool opts in or the mode
+    /// is <see cref="SessionMode.PerConnection"/>). Falls back to the caller's
+    /// <c>_input</c> string when no eligible parameter was supplied.
     /// </summary>
-    private static object BuildResumePayload(ToolDefinition toolDef, ToolCallContext toolContext)
+    private static object BuildResumePayload(
+        ToolDefinition toolDef,
+        ToolCallContext toolContext,
+        SessionMode sessionMode,
+        bool treatPromptAsResume)
     {
         if (toolDef.Parameters != null)
         {
             var resumeParams = new Dictionary<string, JsonElement>();
             foreach (var kvp in toolDef.Parameters)
             {
-                if (kvp.Value.Kind != ParameterKind.Resume)
+                if (!IsResumeEligibleKind(kvp.Value.Kind, sessionMode, treatPromptAsResume))
                     continue;
                 if (toolContext.BoundParameters.TryGetValue(kvp.Key, out var value))
                 {
@@ -803,4 +838,29 @@ public class ToolDispatcher : IToolDispatcher
 
         return toolContext.Input ?? string.Empty;
     }
+
+    /// <summary>
+    /// Centralizes the rule for which <see cref="ParameterKind"/> values are
+    /// eligible to act as resume payload under a given <see cref="SessionMode"/>
+    /// and per-tool <paramref name="treatPromptAsResume"/> opt-in.
+    /// <see cref="ParameterKind.System"/> is always excluded (bridge-controlled).
+    /// </summary>
+    private static bool IsResumeEligibleKind(
+        ParameterKind kind,
+        SessionMode sessionMode,
+        bool treatPromptAsResume) =>
+        kind switch
+        {
+            ParameterKind.System => false,
+            ParameterKind.Resume => true,
+            ParameterKind.PromptAndResume => true,
+            // Auto-resume for plain Prompt: the tool can opt in explicitly via
+            // SessionConfiguration.TreatPromptAsResume (works in any session
+            // mode), or it falls in implicitly under PerConnection (single
+            // owning caller, so reusing the same Prompt parameters on a running
+            // turn is unambiguous). PerReference and Global without the opt-in
+            // are shared across callers, so we do NOT auto-resume there.
+            ParameterKind.Prompt => treatPromptAsResume || sessionMode == SessionMode.PerConnection,
+            _ => false,
+        };
 }

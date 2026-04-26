@@ -128,9 +128,12 @@ public class ToolParameterBinder
         (kind, phase) switch
         {
             (ParameterKind.Prompt, TurnPhase.NewTurn) => true,
+            (ParameterKind.PromptAndResume, TurnPhase.NewTurn) => true,
             (ParameterKind.Resume, TurnPhase.Resume) => true,
-            // System parameters are bridge-controlled; Prompt in Resume/Rejoin
-            // and Resume in NewTurn/Rejoin are never enforced.
+            // System parameters are bridge-controlled. PromptAndResume is required
+            // only in NewTurn (template needs it); on Resume the caller may have
+            // nothing new to send. Prompt in Resume/Rejoin and Resume in NewTurn/Rejoin
+            // are never enforced.
             _ => false,
         };
 }

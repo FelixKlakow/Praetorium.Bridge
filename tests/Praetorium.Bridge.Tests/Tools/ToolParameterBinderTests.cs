@@ -111,4 +111,49 @@ public class ToolParameterBinderTests
         var ctx = _binder.Bind(def, ParseJson("""{"_resetSession": false}"""));
         Assert.False(ctx.ResetSession);
     }
+
+    [Fact]
+    public void Bind_PromptAndResume_RequiredOnNewTurn_Throws_WhenMissing()
+    {
+        var def = new ToolDefinition
+        {
+            Parameters = new Dictionary<string, ParameterDefinition>
+            {
+                ["context"] = new() { Type = "string", Required = true, Kind = ParameterKind.PromptAndResume }
+            }
+        };
+
+        Assert.Throws<ArgumentException>(() => _binder.Bind(def, ParseJson("{}"), TurnPhase.NewTurn));
+    }
+
+    [Fact]
+    public void Bind_PromptAndResume_NotRequiredOnResume_AllowsMissing()
+    {
+        var def = new ToolDefinition
+        {
+            Parameters = new Dictionary<string, ParameterDefinition>
+            {
+                ["context"] = new() { Type = "string", Required = true, Kind = ParameterKind.PromptAndResume }
+            }
+        };
+
+        // No exception — Resume phase does not enforce PromptAndResume required-ness.
+        var ctx = _binder.Bind(def, ParseJson("{}"), TurnPhase.Resume);
+        Assert.Empty(ctx.BoundParameters);
+    }
+
+    [Fact]
+    public void Bind_PromptAndResume_NotRequiredOnRejoin_AllowsMissing()
+    {
+        var def = new ToolDefinition
+        {
+            Parameters = new Dictionary<string, ParameterDefinition>
+            {
+                ["context"] = new() { Type = "string", Required = true, Kind = ParameterKind.PromptAndResume }
+            }
+        };
+
+        var ctx = _binder.Bind(def, ParseJson("{}"), TurnPhase.Rejoin);
+        Assert.Empty(ctx.BoundParameters);
+    }
 }

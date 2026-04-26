@@ -120,6 +120,9 @@ public class CopilotAgentProvider : IAgentProvider
                 Content = context.SystemPrompt
             },
             OnPermissionRequest = PermissionHandler.ApproveAll,
+            // Dictionary<string, object> is required because the Copilot SDK removed McpHttpServerConfig
+            // as a typed base class in 0.2.2. McpRemoteServerConfig no longer shares a common base with
+            // other server config types, so object is the only common type available without SDK changes.
             McpServers = new Dictionary<string, object>
             {
                 ["praetorium-internal"] = new McpRemoteServerConfig

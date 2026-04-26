@@ -25,7 +25,9 @@ public class ParameterDefinition
     /// <see cref="Kind"/> and the current dispatch <see cref="Tools.TurnPhase"/>:
     /// <see cref="ParameterKind.Prompt"/> is only required on a fresh turn,
     /// <see cref="ParameterKind.Resume"/> only when resuming a blocked session,
-    /// <see cref="ParameterKind.System"/> is never caller-required.
+    /// <see cref="ParameterKind.PromptAndResume"/> only on a fresh turn (resume
+    /// input is optional), <see cref="ParameterKind.System"/> is never
+    /// caller-required.
     /// </summary>
     [JsonPropertyName("required")]
     public bool Required { get; set; }

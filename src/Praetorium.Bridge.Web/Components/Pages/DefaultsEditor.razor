@@ -145,7 +145,16 @@
 
                 <div class="form-group">
                     <label>Response Timeout (seconds):</label>
-                    <input type="number" @bind="Defaults.Session.ResponseTimeoutSeconds" class="form-input" min="10" max="3600" />
+                    <input type="number" @bind="Defaults.Session.ResponseTimeoutSeconds" class="form-input" min="0" max="3600" />
+                    <p class="field-hint">Maximum time to wait for an agent response before timing out. Set to 0 for no timeout (wait indefinitely).</p>
+                </div>
+
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" @bind="Defaults.Session.TreatPromptAsResume" />
+                        Treat Prompt parameters as Resume
+                    </label>
+                    <p class="field-hint">When checked, every Prompt-kind parameter is forwarded as resume payload on follow-up calls — regardless of session mode. PerConnection already behaves this way implicitly.</p>
                 </div>
             </div>
         }

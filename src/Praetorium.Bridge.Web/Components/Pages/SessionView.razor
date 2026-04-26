@@ -1,6 +1,8 @@
 @page "/sessions"
 @rendermode InteractiveServer
 @using System.Threading
+@using Ganss.Xss
+@using Markdig
 @using Praetorium.Bridge.Agents
 @using Praetorium.Bridge.Sessions
 @using Praetorium.Bridge.Web.Services
@@ -124,15 +126,10 @@
                         {
                             var thoughtText = ExtractThoughtText(entry.Details) ?? entry.Details;
                             <div class="transcript-entry agent agent-thought">
-                                <div class="entry-head">
-                                    <span class="entry-source">Agent</span>
-                                    <span class="entry-kind">Thought</span>
-                                    <span class="entry-title">@entry.Title</span>
-                                    <span class="entry-time">@entry.Timestamp.ToLocalTime().ToString("HH:mm:ss.fff")</span>
-                                </div>
+                                <span class="entry-time-float">@entry.Timestamp.ToLocalTime().ToString("HH:mm:ss.fff")</span>
                                 @if (!string.IsNullOrEmpty(thoughtText))
                                 {
-                                    <div class="entry-details entry-details--thought">@thoughtText</div>
+                                    <div class="entry-details entry-details--thought">@((MarkupString)RenderMarkdown(thoughtText))</div>
                                 }
                             </div>
                         }
@@ -223,6 +220,16 @@
                                 }
                             </div>
                         }
+                        else if (entry.Source == SessionTranscriptSource.Agent && entry.Kind == nameof(AgentActivityKind.AssistantMessage))
+                        {
+                            <div class="transcript-entry agent agent-message">
+                                <span class="entry-time-float">@entry.Timestamp.ToLocalTime().ToString("HH:mm:ss.fff")</span>
+                                @if (!string.IsNullOrEmpty(entry.Details))
+                                {
+                                    <div class="entry-details entry-details--message">@((MarkupString)RenderMarkdown(entry.Details!))</div>
+                                }
+                            </div>
+                        }
                         else
                         {
                             <div class="transcript-entry @SourceClass(entry.Source) @EntryKindClass(entry)">
@@ -237,11 +244,7 @@
                                 </div>
                                 @if (!string.IsNullOrEmpty(entry.Details))
                                 {
-                                    @if (entry.Source == SessionTranscriptSource.Agent && entry.Kind == nameof(AgentActivityKind.AssistantMessage))
-                                    {
-                                        <div class="entry-details entry-details--message">@entry.Details</div>
-                                    }
-                                    else if (entry.Source == SessionTranscriptSource.Lifecycle && entry.Kind == "Prompt")
+                                    if (entry.Source == SessionTranscriptSource.Lifecycle && entry.Kind == "Prompt")
                                     {
                                         <details class="entry-prompt-wrapper">
                                             <summary class="entry-prompt-summary">Show system prompt</summary>
@@ -371,11 +374,7 @@
                 entryCount = transcript.Count,
                 entries = transcript,
             };
-            var json = System.Text.Json.JsonSerializer.Serialize(payload, new System.Text.Json.JsonSerializerOptions
-            {
-                WriteIndented = true,
-                Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() },
-            });
+            var json = System.Text.Json.JsonSerializer.Serialize(payload, TranscriptExportOptions);
             var filename = $"session-{selectedSessionId}-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}.json";
             await JS.InvokeVoidAsync("praetoriumDownload", filename, json, "application/json");
         }
@@ -615,6 +614,20 @@
         "error" => complete?.Details ?? "Tool failed",
         _ => "Tool running…",
     };
+
+    private static readonly System.Text.Json.JsonSerializerOptions TranscriptExportOptions = new()
+    {
+        WriteIndented = true,
+        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() },
+    };
+
+    private static readonly MarkdownPipeline MarkdownPipeline =
+        new MarkdownPipelineBuilder().UseAdvancedExtensions().DisableHtml().Build();
+
+    private static readonly HtmlSanitizer Sanitizer = new();
+
+    private static string RenderMarkdown(string markdown) =>
+        Sanitizer.Sanitize(Markdown.ToHtml(markdown, MarkdownPipeline));
 
     public void Dispose()
     {

@@ -27,4 +27,13 @@ public enum ParameterKind
     /// binder — the dispatcher handles these itself.
     /// </summary>
     System = 2,
+
+    /// <summary>
+    /// Serves as both <see cref="Prompt"/> and <see cref="Resume"/>: feeds the
+    /// initial prompt template on a fresh turn and is forwarded as inbound
+    /// payload to a parked blocking signaling tool on subsequent calls.
+    /// Required-enforcement is active only when the turn phase is NewTurn
+    /// (Resume input is optional — the caller may have nothing new to send).
+    /// </summary>
+    PromptAndResume = 3,
 }

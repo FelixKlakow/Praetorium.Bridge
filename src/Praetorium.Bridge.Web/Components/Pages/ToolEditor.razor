@@ -96,6 +96,17 @@
                                 </label>
                             </div>
                         </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Kind:</label>
+                                <select @bind="newParamKind" class="form-input">
+                                    <option value="@ParameterKind.Prompt">Prompt (initial input only)</option>
+                                    <option value="@ParameterKind.Resume">Resume (continue parked turn only)</option>
+                                    <option value="@ParameterKind.PromptAndResume">Prompt &amp; Resume (both)</option>
+                                </select>
+                                <p class="field-hint">Controls when the value reaches the agent. <strong>Prompt</strong> renders the initial template on a fresh turn. <strong>Resume</strong> is delivered as inbound payload to a parked blocking signaling tool. <strong>Prompt &amp; Resume</strong> does both. In <em>PerConnection</em> session mode, every Prompt parameter is auto-resumed too.</p>
+                            </div>
+                        </div>
                         <div class="form-group">
                             <label>Description:</label>
                             <input type="text" @bind="newParamDescription" class="form-input" placeholder="Describe what this parameter does..." />
@@ -122,6 +133,10 @@
                                     <div class="param-name">@param.Key</div>
                                     <div class="param-badges">
                                         <span class="param-type">@param.Value.Type</span>
+                                        @if (param.Value.Kind != ParameterKind.Prompt)
+                                        {
+                                            <span class="param-kind" title="Parameter kind">@FormatKind(param.Value.Kind)</span>
+                                        }
                                         @if (param.Value.Required)
                                         {
                                             <span class="param-required">required</span>
@@ -136,17 +151,10 @@
                                         <button class="remove-button" @onclick="() => RemoveParameter(param.Key)" title="Remove parameter">×</button>
                                     }
                                 </div>
-                                @if (isManaged)
-                                {
-                                    <div class="managed-description-row">
-                                        <input type="text" @bind="param.Value.Description" class="form-input param-description-input"
-                                               placeholder="Describe what this parameter does…" />
-                                    </div>
-                                }
-                                else if (!string.IsNullOrEmpty(param.Value.Description))
-                                {
-                                    <div class="param-description">@param.Value.Description</div>
-                                }
+                                <div class="managed-description-row">
+                                    <input type="text" @bind="param.Value.Description" class="form-input param-description-input"
+                                           placeholder="Describe what this parameter does…" />
+                                </div>
                             </div>
                         }
                     </div>
@@ -465,8 +473,16 @@
 
                 <div class="form-group">
                     <label>Response Timeout (seconds):</label>
-                    <input type="number" @bind="Tool.Session.ResponseTimeoutSeconds" class="form-input" min="10" max="3600" />
-                    <p class="field-hint">Maximum time to wait for an agent response before timing out. Increase for long-running operations.</p>
+                    <input type="number" @bind="Tool.Session.ResponseTimeoutSeconds" class="form-input" min="0" max="3600" />
+                    <p class="field-hint">Maximum time to wait for an agent response before timing out. Set to 0 for no timeout (wait indefinitely).</p>
+                </div>
+
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" @bind="Tool.Session.TreatPromptAsResume" />
+                        Treat Prompt parameters as Resume
+                    </label>
+                    <p class="field-hint">When checked, every Prompt-kind parameter is also forwarded as inbound payload to a parked blocking signaling tool on follow-up calls — regardless of session mode. Use this for tools whose Prompt parameters always double as follow-up input. <strong>PerConnection</strong> already behaves this way implicitly; this flag is most useful for <strong>PerReference</strong> and <strong>Global</strong>.</p>
                 </div>
             </div>
         }
@@ -544,7 +560,17 @@
     private string newParamType = "string";
     private string newParamDescription = "";
     private bool newParamRequired = false;
+    private ParameterKind newParamKind = ParameterKind.Prompt;
     private string paramError = "";
+
+    private static string FormatKind(ParameterKind kind) => kind switch
+    {
+        ParameterKind.Prompt => "prompt",
+        ParameterKind.Resume => "resume",
+        ParameterKind.PromptAndResume => "prompt + resume",
+        ParameterKind.System => "system",
+        _ => kind.ToString().ToLowerInvariant(),
+    };
 
     // Agent config
     private bool showAddToolSourceForm = false;
@@ -996,6 +1022,7 @@
         newParamType = "string";
         newParamDescription = "";
         newParamRequired = false;
+        newParamKind = ParameterKind.Prompt;
         paramError = "";
     }
 
@@ -1037,7 +1064,8 @@
         {
             Type = newParamType,
             Description = newParamDescription,
-            Required = newParamRequired
+            Required = newParamRequired,
+            Kind = newParamKind
         };
 
         showAddParameterForm = false;
@@ -1151,6 +1179,7 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        await base.OnAfterRenderAsync(firstRender);
         if (_pendingCursorPosition.HasValue)
         {
             var pos = _pendingCursorPosition.Value;
