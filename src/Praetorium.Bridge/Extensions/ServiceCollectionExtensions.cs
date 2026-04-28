@@ -70,6 +70,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IToolDispatcher, ToolDispatcher>();
 
         // Register MCP server builder as singleton
+        services.AddSingleton<McpServerTracker>();
         services.AddSingleton<McpServerBuilder>();
 
         // Register dynamic tool handler as singleton

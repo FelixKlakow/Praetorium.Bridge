@@ -103,6 +103,11 @@ builder.Services.AddMcpServer(options =>
     var mcpBuilder = services.GetRequiredService<McpServerBuilder>();
     var definitions = mcpBuilder.BuildToolDefinitions();
 
+    // Register this server session so configuration-change notifications can
+    // be broadcast to all currently-connected public MCP clients.
+    var tracker = services.GetRequiredService<McpServerTracker>();
+    tracker.Register(context.Server);
+
     var publicTools = definitions.Select(d => new Tool
     {
         Name = d.Name,
