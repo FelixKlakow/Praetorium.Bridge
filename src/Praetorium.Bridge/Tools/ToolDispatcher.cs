@@ -168,8 +168,18 @@ public class ToolDispatcher : IToolDispatcher
             // deadlock — the agent will never produce more outbound output until it
             // receives an inbound reply, but a pure Rejoin posts nothing. When the
             // caller actually carried a payload (any non-reserved tool parameter, or
-            // _input), promote to Resume and treat plain Prompt-kind parameters as
-            // resume input so the agent is unblocked.
+            // _input) AND the parked signaling tool was declared open to new prompts
+            // (acceptsNewPrompt=true on the SignalingToolEntry), promote to Resume
+            // and treat plain Prompt-kind parameters as resume input so the agent is
+            // unblocked.
+            //
+            // Tools that demand a specific reply (e.g. request_input, await_signal)
+            // leave acceptsNewPrompt=false; an unrelated payload-bearing follow-up
+            // call must stay classified as Rejoin so it is not silently misdelivered
+            // as the awaited reply. With the existing per-reference queueing in
+            // SessionManager, the next NewTurn carrying the same prompt will be
+            // queued behind the running agent — preserving the documented "queue
+            // prompts when an agent is already running" behavior.
             //
             // Pure polls (no caller-supplied payload) stay as Rejoin so multi-message
             // streaming scenarios — where the caller drains queued outbound signals
@@ -183,11 +193,13 @@ public class ToolDispatcher : IToolDispatcher
             // applies to that narrowing direction only.)
             if (phase == TurnPhase.Rejoin
                 && CallerProvidedAnyPayload(arguments, toolDef.Session?.ReferenceIdParameter, peekContext.Input)
-                && _signalRegistry.HasPendingInboundWaiter(sessionInfo.SessionId))
+                && _signalRegistry.HasPendingInboundWaiter(sessionInfo.SessionId)
+                && _signalRegistry.ParkedSignalingToolAcceptsNewPrompt(sessionInfo.SessionId))
             {
                 _logger.LogInformation(
-                    "Session {SessionId}: agent is parked on inbound waiter and caller supplied payload; " +
-                    "promoting Rejoin to Resume so caller-supplied parameters are delivered as resume input.",
+                    "Session {SessionId}: agent is parked on a blocking signaling tool that accepts new prompts and " +
+                    "the caller supplied payload; promoting Rejoin to Resume so caller-supplied parameters are " +
+                    "delivered as resume input.",
                     sessionInfo.SessionId);
                 effectiveTreatPromptAsResume = true;
                 phase = TurnPhase.Resume;

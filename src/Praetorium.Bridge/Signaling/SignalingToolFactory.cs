@@ -82,6 +82,14 @@ public static class SignalingToolFactory
         string promptDirectory,
         TimeSpan keepaliveInterval)
     {
+        if (entry.AcceptsNewPrompt && !entry.IsBlocking)
+        {
+            throw new ArgumentException(
+                $"Signaling tool '{entry.Name}' has acceptsNewPrompt=true but isBlocking=false. " +
+                "acceptsNewPrompt is only meaningful for blocking signaling tools.",
+                nameof(entry));
+        }
+
         var schema = ConvertParametersToSchema(entry.Parameters);
 
         async Task<string> Handler(JsonElement parameters, IProgress<ProgressNotificationValue>? progress, CancellationToken ct)
@@ -114,11 +122,22 @@ public static class SignalingToolFactory
             if (!isBlocking)
                 return $"Signal '{entry.Name}' dispatched.";
 
-            var signal = await WaitInboundWithKeepaliveAsync(
-                signalRegistry, sessionId, progress, keepaliveInterval, $"waiting for '{entry.Name}' response", ct)
-                .ConfigureAwait(false);
+            // Record the parked tool's "open to new prompts" disposition so the
+            // dispatcher's parked-agent fallback can decide whether a follow-up
+            // payload-bearing call should unblock this waiter or stay a Rejoin.
+            signalRegistry.BeginParkedSignalingTool(sessionId, entry.AcceptsNewPrompt);
+            try
+            {
+                var signal = await WaitInboundWithKeepaliveAsync(
+                    signalRegistry, sessionId, progress, keepaliveInterval, $"waiting for '{entry.Name}' response", ct)
+                    .ConfigureAwait(false);
 
-            return FormatBlockingResponse(entry, signal, promptDirectory);
+                return FormatBlockingResponse(entry, signal, promptDirectory);
+            }
+            finally
+            {
+                signalRegistry.EndParkedSignalingTool(sessionId);
+            }
         }
 
         return new SignalingToolDefinition(entry.Name, entry.Description, schema, Handler);

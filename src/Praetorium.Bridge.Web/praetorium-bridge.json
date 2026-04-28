@@ -119,6 +119,7 @@
               }
             },
             "isBlocking": true,
+            "acceptsNewPrompt": true,
             "responseParameters": {}
           },
           {

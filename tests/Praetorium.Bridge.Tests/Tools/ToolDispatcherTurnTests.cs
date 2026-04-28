@@ -412,17 +412,34 @@ public class ToolDispatcherTurnTests
         var h = BuildDispatcherWithTool(toolDef);
 
         // First turn: agent emits an outbound signal, then parks waiting for a
-        // caller reply (mimics a blocking respond / request_input tool).
+        // caller reply (mimics a blocking 'respond'-style tool that is open to
+        // accepting a brand-new prompt — acceptsNewPrompt=true).
         var observedReply = new TaskCompletionSource<SignalResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         h.AgentProvider.NextBehaviour = async (sessionId, registry, ct) =>
         {
             registry.SignalOutbound(sessionId, SignalResult.Input(ToolResponse.Complete("ready-for-review")));
-            var reply = await registry.WaitInboundAsync(sessionId, TimeSpan.FromSeconds(30), ct);
-            observedReply.TrySetResult(reply);
+            registry.BeginParkedSignalingTool(sessionId, acceptsNewPrompt: true);
+            try
+            {
+                var reply = await registry.WaitInboundAsync(sessionId, TimeSpan.FromSeconds(30), ct);
+                observedReply.TrySetResult(reply);
+            }
+            finally
+            {
+                registry.EndParkedSignalingTool(sessionId);
+            }
             // Park again so the second dispatch's outbound wait can race the
             // turn task and observe a clean response on a still-running turn.
             registry.SignalOutbound(sessionId, SignalResult.Input(ToolResponse.Complete("review-acknowledged")));
-            await registry.WaitInboundAsync(sessionId, TimeSpan.FromSeconds(30), ct);
+            registry.BeginParkedSignalingTool(sessionId, acceptsNewPrompt: true);
+            try
+            {
+                await registry.WaitInboundAsync(sessionId, TimeSpan.FromSeconds(30), ct);
+            }
+            finally
+            {
+                registry.EndParkedSignalingTool(sessionId);
+            }
             return "done";
         };
 
@@ -458,6 +475,96 @@ public class ToolDispatcherTurnTests
         var data = Assert.IsType<Dictionary<string, JsonElement>>(reply.Data);
         Assert.True(data.TryGetValue("notes", out var notesElement));
         Assert.Equal("looks-good-ship-it", notesElement.GetString());
+
+        Assert.Equal(1, h.AgentProvider.CreateAgentCalls);
+    }
+
+    [Fact]
+    public async Task Continuation_AgentParkedOnInbound_AcceptsNewPromptFalse_StaysRejoin_DoesNotPostInbound()
+    {
+        // Companion to the test above: when the parked blocking signaling tool
+        // is NOT open to new prompts (e.g. request_input / await_signal — i.e.
+        // acceptsNewPrompt=false / unset), a follow-up payload-bearing call
+        // must NOT be promoted to Resume. The dispatcher must stay in Rejoin
+        // and not deliver an unrelated prompt as the awaited reply.
+        var toolDef = new ToolDefinition
+        {
+            Description = "test",
+            Parameters = new Dictionary<string, ParameterDefinition>
+            {
+                ["notes"] = new ParameterDefinition
+                {
+                    Type = "string",
+                    Kind = ParameterKind.Prompt,
+                    Required = false,
+                },
+            },
+            Agent = new AgentConfiguration { Model = "m" },
+            Session = new SessionConfiguration
+            {
+                Mode = SessionMode.PerReference,
+                ReferenceIdParameter = "referenceId",
+                ResponseTimeoutSeconds = ShortTimeoutSeconds,
+                TreatPromptAsResume = false,
+            },
+            Signaling = new SignalingConfiguration(),
+        };
+
+        var h = BuildDispatcherWithTool(toolDef);
+
+        // Park on a blocking tool that does NOT accept new prompts. Emit a
+        // second outbound after the wait is released so the rejoin call has a
+        // payload to drain (used to verify the second call is a pure Rejoin).
+        var inboundPosted = new TaskCompletionSource<SignalResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.AgentProvider.NextBehaviour = async (sessionId, registry, ct) =>
+        {
+            registry.SignalOutbound(sessionId, SignalResult.Input(ToolResponse.Complete("question?")));
+            registry.BeginParkedSignalingTool(sessionId, acceptsNewPrompt: false);
+            try
+            {
+                var reply = await registry.WaitInboundAsync(sessionId, TimeSpan.FromSeconds(30), ct);
+                inboundPosted.TrySetResult(reply);
+            }
+            finally
+            {
+                registry.EndParkedSignalingTool(sessionId);
+            }
+            registry.SignalOutbound(sessionId, SignalResult.Input(ToolResponse.Complete("after-reply")));
+            return "done";
+        };
+
+        var first = await h.Dispatcher.DispatchAsync(
+            ToolName,
+            BuildArgsWithNotes(notes: null),
+            connectionId: null,
+            progress: null,
+            CancellationToken.None);
+        Assert.Equal("partial", first.Status);
+        Assert.Equal("question?", first.Message);
+
+        h.AgentProvider.ThrowIfCreateAgentCalledAgain = true;
+
+        // Caller passes ONLY a Prompt-kind parameter while the agent is parked
+        // on a non-acceptsNewPrompt tool. The dispatcher must stay in Rejoin —
+        // i.e. it must NOT post anything on the inbound channel as a reply to
+        // the parked tool.
+        using var rejoinCts = new CancellationTokenSource(TimeSpan.FromMilliseconds(750));
+        var rejoinTask = h.Dispatcher.DispatchAsync(
+            ToolName,
+            BuildArgsWithNotes(notes: "looks-good-ship-it"),
+            connectionId: null,
+            progress: null,
+            rejoinCts.Token);
+
+        // The rejoin call has no outbound to drain (the agent is parked) and
+        // must NOT silently feed the caller's prompt to the parked waiter.
+        // It is allowed to time out — what matters is that inboundPosted does
+        // not complete as a result of this call.
+        try { await rejoinTask; } catch { /* expected: timeout / cancellation */ }
+
+        Assert.False(
+            inboundPosted.Task.IsCompleted,
+            "Parked tool with acceptsNewPrompt=false must not receive the caller's Prompt-kind parameter as a reply.");
 
         Assert.Equal(1, h.AgentProvider.CreateAgentCalls);
     }

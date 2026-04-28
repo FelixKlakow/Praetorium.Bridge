@@ -167,6 +167,16 @@
 
                                 @if (entry.IsBlocking)
                                 {
+                                    <div class="form-group">
+                                        <label class="checkbox-label">
+                                            <input type="checkbox" checked="@entry.AcceptsNewPrompt"
+                                                   @onchange="(e) => OnAcceptsNewPromptChanged(entry, (bool)(e.Value ?? false))" />
+                                            <span class="checkbox-text">
+                                                <strong>Accepts new prompt</strong> — while parked here, the agent is open to a brand-new prompt from the caller (use for terminal/respond-style tools; leave off for tools that demand a specific reply such as <code>request_input</code>)
+                                            </span>
+                                        </label>
+                                    </div>
+
                                     <div class="signal-direction">
                                         <div class="direction-label">← Response (from external caller back to agent)</div>
 
@@ -440,11 +450,20 @@
             entry.ResponseFormat = null;
             entry.ResponseParameters = null;
             entry.ResponsePromptFile = null;
+            // acceptsNewPrompt is only valid for blocking tools; clear it so
+            // configurations stay consistent with the runtime validation.
+            entry.AcceptsNewPrompt = false;
         }
         else
         {
             entry.ResponseFormat ??= SignalingToolFactory.JsonResponseFormat;
         }
+    }
+
+    private void OnAcceptsNewPromptChanged(SignalingToolEntry entry, bool value)
+    {
+        // Guarded in markup (only shown when IsBlocking) but defended here too.
+        entry.AcceptsNewPrompt = value && entry.IsBlocking;
     }
 
     private async Task OnOutgoingFormatChanged(SignalingToolEntry entry, string? format)
