@@ -376,6 +376,134 @@ public class ToolDispatcherTurnTests
         Assert.Equal("m4-blocks", r4.Message);
     }
 
+    [Fact]
+    public async Task Continuation_AgentParkedOnInbound_RejoinWithPromptParam_PromotedToResume_DeliversInput()
+    {
+        // Regression for the issue where a session does not continue after an
+        // external rejoin: the agent emitted an outbound signal and parked inside
+        // a blocking signaling tool, but the caller's follow-up tool invocation
+        // carried only a Prompt-kind parameter (no Resume-kind, no _input). With
+        // a non-PerConnection session and TreatPromptAsResume=false the
+        // dispatcher previously classified the call as Rejoin, posted nothing on
+        // the inbound channel, and deadlocked the agent.
+        var toolDef = new ToolDefinition
+        {
+            Description = "test",
+            Parameters = new Dictionary<string, ParameterDefinition>
+            {
+                ["notes"] = new ParameterDefinition
+                {
+                    Type = "string",
+                    Kind = ParameterKind.Prompt,
+                    Required = false,
+                },
+            },
+            Agent = new AgentConfiguration { Model = "m" },
+            Session = new SessionConfiguration
+            {
+                Mode = SessionMode.PerReference,
+                ReferenceIdParameter = "referenceId",
+                ResponseTimeoutSeconds = ShortTimeoutSeconds,
+                TreatPromptAsResume = false,
+            },
+            Signaling = new SignalingConfiguration(),
+        };
+
+        var h = BuildDispatcherWithTool(toolDef);
+
+        // First turn: agent emits an outbound signal, then parks waiting for a
+        // caller reply (mimics a blocking respond / request_input tool).
+        var observedReply = new TaskCompletionSource<SignalResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.AgentProvider.NextBehaviour = async (sessionId, registry, ct) =>
+        {
+            registry.SignalOutbound(sessionId, SignalResult.Input(ToolResponse.Complete("ready-for-review")));
+            var reply = await registry.WaitInboundAsync(sessionId, TimeSpan.FromSeconds(30), ct);
+            observedReply.TrySetResult(reply);
+            // Park again so the second dispatch's outbound wait can race the
+            // turn task and observe a clean response on a still-running turn.
+            registry.SignalOutbound(sessionId, SignalResult.Input(ToolResponse.Complete("review-acknowledged")));
+            await registry.WaitInboundAsync(sessionId, TimeSpan.FromSeconds(30), ct);
+            return "done";
+        };
+
+        var first = await h.Dispatcher.DispatchAsync(
+            ToolName,
+            BuildArgsWithNotes(notes: null),
+            connectionId: null,
+            progress: null,
+            CancellationToken.None);
+        Assert.Equal("partial", first.Status);
+        Assert.Equal("ready-for-review", first.Message);
+
+        // The dispatcher must NOT spawn a second agent on the rejoin call.
+        h.AgentProvider.ThrowIfCreateAgentCalledAgain = true;
+
+        // Second call: caller passes ONLY a Prompt-kind parameter (no _input,
+        // no Resume-kind). Without the parked-agent fallback this would be
+        // classified as Rejoin and the agent would deadlock.
+        var second = await h.Dispatcher.DispatchAsync(
+            ToolName,
+            BuildArgsWithNotes(notes: "looks-good-ship-it"),
+            connectionId: null,
+            progress: null,
+            CancellationToken.None);
+
+        Assert.Equal("partial", second.Status);
+        Assert.Equal("review-acknowledged", second.Message);
+
+        // The agent's blocking signaling tool received the caller's Prompt-kind
+        // parameter as a structured resume payload.
+        var reply = await observedReply.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(SignalType.Input, reply.Type);
+        var data = Assert.IsType<Dictionary<string, JsonElement>>(reply.Data);
+        Assert.True(data.TryGetValue("notes", out var notesElement));
+        Assert.Equal("looks-good-ship-it", notesElement.GetString());
+
+        Assert.Equal(1, h.AgentProvider.CreateAgentCalls);
+    }
+
+    private static Harness BuildDispatcherWithTool(ToolDefinition toolDef)
+    {
+        var config = new BridgeConfiguration
+        {
+            Tools = new Dictionary<string, ToolDefinition> { [ToolName] = toolDef },
+        };
+
+        var configProvider = new StubConfigurationProvider(config);
+        var store = new InMemorySessionStore();
+        var registry = new SignalRegistry();
+        var agentProvider = new ScriptedAgentProvider();
+        var sessionManager = new SessionManager(
+            store, registry, agentProvider, new NullBridgeHooks(), NullLogger<SessionManager>.Instance);
+
+        agentProvider.Registry = registry;
+        agentProvider.SessionStore = store;
+
+        var dispatcher = new ToolDispatcher(
+            configProvider,
+            sessionManager,
+            registry,
+            new StubPromptResolver(),
+            agentProvider,
+            new NullBridgeHooks(),
+            NullLogger<ToolDispatcher>.Instance);
+
+        return new Harness
+        {
+            Dispatcher = dispatcher,
+            AgentProvider = agentProvider,
+            SessionManager = sessionManager,
+            SignalRegistry = registry,
+        };
+    }
+
+    private static JsonElement BuildArgsWithNotes(string? notes)
+    {
+        var doc = new Dictionary<string, object?> { ["referenceId"] = ReferenceId };
+        if (notes != null) doc["notes"] = notes;
+        return JsonSerializer.SerializeToElement(doc);
+    }
+
     // -----------------------------------------------------------------------
     // Test doubles
     // -----------------------------------------------------------------------

@@ -136,25 +136,61 @@ public class ToolDispatcher : IToolDispatcher
             //   Rejoin  — a running turn AND the caller supplied no resume-eligible
             //             payload (pure poll).
             //
-            // NOTE: The phase MUST NOT depend on whether the agent has already registered
-            // an inbound waiter. Between the agent emitting an outbound signal and the
+            // NOTE: The primary classification MUST NOT *narrow* Resume to require
+            // waiter presence. Between the agent emitting an outbound signal and the
             // agent's blocking handler reaching its WaitInboundAsync call, there is a
             // race window during which the external caller can arrive — gating Resume
             // on waiter presence would silently drop the caller's input in that window.
+            // (A separate parked-agent fallback below only *widens* Resume after the
+            // primary decision, which is safe.)
             var existingTurn = isNew ? null : _sessionManager.GetRunningTurn(sessionInfo.SessionId);
             var hasRunningTurn = existingTurn != null && !existingTurn.IsCompleted;
+            // Local copy of the per-tool TreatPromptAsResume opt-in. May be promoted
+            // to true below when the agent is provably parked in a blocking signaling
+            // tool — see the parked-agent fallback after the initial classification.
+            var effectiveTreatPromptAsResume = sessionConfig.TreatPromptAsResume;
             TurnPhase phase;
             if (!hasRunningTurn)
             {
                 phase = TurnPhase.NewTurn;
             }
-            else if (CallerProvidedResumePayload(toolDef, peekContext, sessionMode, sessionConfig.TreatPromptAsResume))
+            else if (CallerProvidedResumePayload(toolDef, peekContext, sessionMode, effectiveTreatPromptAsResume))
             {
                 phase = TurnPhase.Resume;
             }
             else
             {
                 phase = TurnPhase.Rejoin;
+            }
+
+            // Parked-agent fallback: a Rejoin classification on a turn that has a
+            // blocking signaling tool currently waiting on the inbound channel is a
+            // deadlock — the agent will never produce more outbound output until it
+            // receives an inbound reply, but a pure Rejoin posts nothing. When the
+            // caller actually carried a payload (any non-reserved tool parameter, or
+            // _input), promote to Resume and treat plain Prompt-kind parameters as
+            // resume input so the agent is unblocked.
+            //
+            // Pure polls (no caller-supplied payload) stay as Rejoin so multi-message
+            // streaming scenarios — where the caller drains queued outbound signals
+            // while the agent is parked — keep working without prematurely unblocking
+            // the agent with an empty inbound reply.
+            //
+            // This only WIDENS the set of Resume classifications; it never narrows
+            // them, so it does not reintroduce the race where a caller arriving
+            // between SignalOutbound and WaitInboundAsync would have its input
+            // dropped. (The original guard against gating Resume on waiter presence
+            // applies to that narrowing direction only.)
+            if (phase == TurnPhase.Rejoin
+                && CallerProvidedAnyPayload(arguments, toolDef.Session?.ReferenceIdParameter, peekContext.Input)
+                && _signalRegistry.HasPendingInboundWaiter(sessionInfo.SessionId))
+            {
+                _logger.LogInformation(
+                    "Session {SessionId}: agent is parked on inbound waiter and caller supplied payload; " +
+                    "promoting Rejoin to Resume so caller-supplied parameters are delivered as resume input.",
+                    sessionInfo.SessionId);
+                effectiveTreatPromptAsResume = true;
+                phase = TurnPhase.Resume;
             }
 
             // Step 5: Re-bind with the phase so required-parameter enforcement
@@ -195,7 +231,7 @@ public class ToolDispatcher : IToolDispatcher
                 case TurnPhase.Resume:
                 {
                     _logger.LogInformation("Resuming blocked turn for session {SessionId}", sessionInfo.SessionId);
-                    var resumePayload = BuildResumePayload(toolDef, toolContext, sessionMode, sessionConfig.TreatPromptAsResume);
+                    var resumePayload = BuildResumePayload(toolDef, toolContext, sessionMode, effectiveTreatPromptAsResume);
                     _signalRegistry.SignalInbound(sessionInfo.SessionId, SignalResult.Input(resumePayload));
                     var inputText = resumePayload switch
                     {
@@ -764,6 +800,35 @@ public class ToolDispatcher : IToolDispatcher
         }
 
         return File.ReadAllText(fullPath);
+    }
+
+    /// <summary>
+    /// Returns <c>true</c> when the caller's raw arguments carry any non-reserved,
+    /// non-reference-ID tool parameter, or when the reserved <c>_input</c> string
+    /// is set. Used by the parked-agent fallback to distinguish a payload-bearing
+    /// call (which must unblock the agent) from a pure poll (which must not).
+    /// </summary>
+    private static bool CallerProvidedAnyPayload(
+        JsonElement arguments,
+        string? referenceIdParamName,
+        string? input)
+    {
+        if (!string.IsNullOrEmpty(input))
+            return true;
+
+        if (arguments.ValueKind != JsonValueKind.Object)
+            return false;
+
+        foreach (var prop in arguments.EnumerateObject())
+        {
+            if (ReservedParameters.IsReserved(prop.Name))
+                continue;
+            if (!string.IsNullOrEmpty(referenceIdParamName) && prop.Name == referenceIdParamName)
+                continue;
+            return true;
+        }
+
+        return false;
     }
 
     /// <summary>
