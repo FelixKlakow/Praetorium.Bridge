@@ -13,6 +13,7 @@ public class McpServerBuilder
 {
     private readonly IConfigurationProvider _configurationProvider;
     private readonly IToolDispatcher _toolDispatcher;
+    private readonly McpServerTracker _serverTracker;
     private McpToolDefinition[]? _cachedToolDefinitions;
 
     /// <summary>
@@ -20,10 +21,12 @@ public class McpServerBuilder
     /// </summary>
     /// <param name="configurationProvider">The bridge configuration provider.</param>
     /// <param name="toolDispatcher">The tool dispatcher for executing tool calls.</param>
-    public McpServerBuilder(IConfigurationProvider configurationProvider, IToolDispatcher toolDispatcher)
+    /// <param name="serverTracker">Tracker used to broadcast tool-list-changed notifications.</param>
+    public McpServerBuilder(IConfigurationProvider configurationProvider, IToolDispatcher toolDispatcher, McpServerTracker serverTracker)
     {
         _configurationProvider = configurationProvider ?? throw new ArgumentNullException(nameof(configurationProvider));
         _toolDispatcher = toolDispatcher ?? throw new ArgumentNullException(nameof(toolDispatcher));
+        _serverTracker = serverTracker ?? throw new ArgumentNullException(nameof(serverTracker));
 
         // Subscribe to configuration changes
         RebuildOnConfigChange();
@@ -52,13 +55,25 @@ public class McpServerBuilder
     }
 
     /// <summary>
-    /// Subscribes to configuration changes and rebuilds tool definitions on reload.
+    /// Subscribes to configuration changes, rebuilds tool definitions on reload,
+    /// and notifies connected MCP clients that the tool list has changed.
     /// </summary>
     public void RebuildOnConfigChange()
     {
-        _configurationProvider.OnConfigurationChanged += _ =>
+        _configurationProvider.OnConfigurationChanged += config =>
         {
             _cachedToolDefinitions = null;
+            // Fire-and-forget: sending the notification is best-effort because
+            // individual sessions may have already disconnected. The
+            // ContinueWith observes any unexpected task faults so they are not
+            // silently swallowed by the runtime.
+            _ = _serverTracker.SendToolListChangedAsync()
+                .ContinueWith(
+                    t => System.Diagnostics.Debug.WriteLine(
+                        $"Failed to send tools/list_changed notification: {t.Exception}"),
+                    System.Threading.CancellationToken.None,
+                    System.Threading.Tasks.TaskContinuationOptions.OnlyOnFaulted,
+                    System.Threading.Tasks.TaskScheduler.Default);
         };
     }
 
