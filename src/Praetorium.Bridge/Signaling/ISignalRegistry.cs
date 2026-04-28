@@ -80,6 +80,31 @@ public interface ISignalRegistry
     bool HasPendingInboundWaiter(string sessionId);
 
     /// <summary>
+    /// Records that a blocking signaling tool is about to park on the session's
+    /// inbound channel and whether that tool is open to accepting a brand-new
+    /// prompt from the external caller (see
+    /// <see cref="Praetorium.Bridge.Configuration.SignalingToolEntry.AcceptsNewPrompt"/>).
+    /// Must be paired with <see cref="EndParkedSignalingTool"/> when the wait
+    /// completes (regardless of outcome).
+    /// </summary>
+    void BeginParkedSignalingTool(string sessionId, bool acceptsNewPrompt);
+
+    /// <summary>
+    /// Clears any state recorded by <see cref="BeginParkedSignalingTool"/> for
+    /// the session. Safe to call when no parked-tool state is present.
+    /// </summary>
+    void EndParkedSignalingTool(string sessionId);
+
+    /// <summary>
+    /// Returns <c>true</c> when the signaling tool currently parked on the
+    /// session's inbound channel was registered with
+    /// <see cref="Praetorium.Bridge.Configuration.SignalingToolEntry.AcceptsNewPrompt"/>
+    /// set to <c>true</c>. Returns <c>false</c> when no tool is parked or when
+    /// the parked tool does not accept new prompts.
+    /// </summary>
+    bool ParkedSignalingToolAcceptsNewPrompt(string sessionId);
+
+    /// <summary>
     /// Returns <c>true</c> when at least one outbound signal is queued for the
     /// session and no caller is currently waiting to consume it. Used by the
     /// dispatcher to detect that more outbound signals are still pending after

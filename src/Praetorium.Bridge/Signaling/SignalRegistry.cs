@@ -30,6 +30,14 @@ public class SignalRegistry : ISignalRegistry
 
     private readonly ConcurrentDictionary<string, SessionSlot> _sessions = new();
     private readonly ConcurrentDictionary<string, string> _sessionConnectionBindings = new();
+    /// <summary>
+    /// Tracks, per session, whether the blocking signaling tool currently parked
+    /// on the inbound channel was registered with <c>acceptsNewPrompt=true</c>.
+    /// Set by <see cref="BeginParkedSignalingTool"/>, cleared by
+    /// <see cref="EndParkedSignalingTool"/>. Absence of an entry means no tool
+    /// is parked.
+    /// </summary>
+    private readonly ConcurrentDictionary<string, bool> _parkedToolAcceptsNewPrompt = new();
 
     /// <inheritdoc />
     public event Action<SignalingEvent>? Signaled;
@@ -95,6 +103,27 @@ public class SignalRegistry : ISignalRegistry
     }
 
     /// <inheritdoc />
+    public void BeginParkedSignalingTool(string sessionId, bool acceptsNewPrompt)
+    {
+        EnsureId(sessionId);
+        _parkedToolAcceptsNewPrompt[sessionId] = acceptsNewPrompt;
+    }
+
+    /// <inheritdoc />
+    public void EndParkedSignalingTool(string sessionId)
+    {
+        EnsureId(sessionId);
+        _parkedToolAcceptsNewPrompt.TryRemove(sessionId, out _);
+    }
+
+    /// <inheritdoc />
+    public bool ParkedSignalingToolAcceptsNewPrompt(string sessionId)
+    {
+        EnsureId(sessionId);
+        return _parkedToolAcceptsNewPrompt.TryGetValue(sessionId, out var acceptsNewPrompt) && acceptsNewPrompt;
+    }
+
+    /// <inheritdoc />
     public bool HasPendingOutbound(string sessionId)
     {
         EnsureId(sessionId);
@@ -150,6 +179,7 @@ public class SignalRegistry : ISignalRegistry
         }
 
         _sessionConnectionBindings.TryRemove(sessionId, out _);
+        _parkedToolAcceptsNewPrompt.TryRemove(sessionId, out _);
     }
 
     private static string EnsureId(string sessionId)

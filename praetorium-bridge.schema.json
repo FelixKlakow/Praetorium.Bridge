@@ -338,6 +338,11 @@
           "description": "When true, the agent waits for a response signal; when false, the tool is fire-and-forget.",
           "default": false
         },
+        "acceptsNewPrompt": {
+          "type": "boolean",
+          "description": "When true, the agent — once parked inside this blocking signaling tool — is open to accepting a brand-new prompt from the external caller. Use for terminal/respond-style tools; leave false (default) for tools that expect a specific reply such as request_input. Only valid when isBlocking is true.",
+          "default": false
+        },
         "responseFormat": {
           "type": "string",
           "description": "Response format for blocking tools.",
@@ -376,6 +381,13 @@
             "required": ["outgoingFormat"]
           },
           "then": { "required": ["outgoingPromptFile"] }
+        },
+        {
+          "if": {
+            "properties": { "acceptsNewPrompt": { "const": true } },
+            "required": ["acceptsNewPrompt"]
+          },
+          "then": { "properties": { "isBlocking": { "const": true } }, "required": ["isBlocking"] }
         }
       ]
     },

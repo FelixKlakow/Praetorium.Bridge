@@ -54,6 +54,28 @@ public class SignalingToolEntry
     public bool IsBlocking { get; set; }
 
     /// <summary>
+    /// When true, the agent — once parked inside this blocking signaling tool — is
+    /// considered open to accept a brand-new prompt from the external caller. The
+    /// dispatcher then promotes a follow-up payload-bearing tool invocation from
+    /// <c>Rejoin</c> to <c>Resume</c>, packing plain <c>Prompt</c>-kind parameters
+    /// into the resume payload so the parked tool's inbound waiter is unblocked
+    /// with the caller's input.
+    /// <para>
+    /// Tools that require a specific reply (e.g. <c>request_input</c>,
+    /// <c>await_signal</c>) must leave this <c>false</c> so that an unrelated
+    /// follow-up call is treated as a pure rejoin instead of being misinterpreted
+    /// as the awaited reply.
+    /// </para>
+    /// <para>
+    /// Only valid when <see cref="IsBlocking"/> is <c>true</c>; setting it on a
+    /// non-blocking tool is a configuration error and is rejected at tool
+    /// construction time.
+    /// </para>
+    /// </summary>
+    [JsonPropertyName("acceptsNewPrompt")]
+    public bool AcceptsNewPrompt { get; set; }
+
+    /// <summary>
     /// Response format for blocking tools. Either "json" (structured payload matching
     /// <see cref="ResponseParameters"/>) or "markdown" (rendered via <see cref="ResponsePromptFile"/>).
     /// Null when the tool is non-blocking.
