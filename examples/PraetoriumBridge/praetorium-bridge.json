@@ -109,7 +109,8 @@
         "referenceIdParameter": "referenceId",
         "poolTimeoutMinutes": 30,
         "responseTimeoutMinutes": 10,
-        "responseTimeoutSeconds": 600
+        "responseTimeoutSeconds": 600,
+        "treatPromptAsResume": true
       },
       "signaling": {
         "keepaliveIntervalSeconds": 15,
