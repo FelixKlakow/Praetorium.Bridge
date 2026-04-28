@@ -82,6 +82,12 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddMcpServer(options =>
 {
     options.ServerInfo = new() { Name = "Praetorium Bridge", Version = "0.1.0" };
+    // Advertise the ToolListChanged capability so connected clients subscribe
+    // to notifications/tools/list_changed and refresh their tool lists when
+    // the bridge configuration is reloaded.
+    options.Capabilities ??= new ServerCapabilities();
+    options.Capabilities.Tools ??= new ToolsCapability();
+    options.Capabilities.Tools.ListChanged = true;
 })
 .WithHttpTransport()
 .WithListToolsHandler((context, ct) =>
