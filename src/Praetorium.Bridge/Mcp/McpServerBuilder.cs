@@ -63,7 +63,17 @@ public class McpServerBuilder
         _configurationProvider.OnConfigurationChanged += config =>
         {
             _cachedToolDefinitions = null;
-            _ = _serverTracker.SendToolListChangedAsync();
+            // Fire-and-forget: sending the notification is best-effort because
+            // individual sessions may have already disconnected. The
+            // ContinueWith observes any unexpected task faults so they are not
+            // silently swallowed by the runtime.
+            _ = _serverTracker.SendToolListChangedAsync()
+                .ContinueWith(
+                    t => System.Diagnostics.Debug.WriteLine(
+                        $"Failed to send tools/list_changed notification: {t.Exception}"),
+                    System.Threading.CancellationToken.None,
+                    System.Threading.Tasks.TaskContinuationOptions.OnlyOnFaulted,
+                    System.Threading.Tasks.TaskScheduler.Default);
         };
     }
 

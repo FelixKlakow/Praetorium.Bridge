@@ -25,7 +25,8 @@ public class McpServerTracker
         if (server == null)
             throw new ArgumentNullException(nameof(server));
 
-        var key = server.SessionId ?? server.GetHashCode().ToString();
+        var key = server.SessionId
+            ?? throw new InvalidOperationException("McpServer.SessionId must not be null.");
         _servers[key] = new WeakReference<McpServer>(server);
     }
 

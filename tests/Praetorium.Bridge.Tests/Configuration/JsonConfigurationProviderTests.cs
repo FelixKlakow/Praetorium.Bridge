@@ -28,7 +28,9 @@ public class JsonConfigurationProviderTests : IDisposable
 
     public void Dispose()
     {
-        try { Directory.Delete(_tempDir, recursive: true); } catch { /* best effort */ }
+        try { Directory.Delete(_tempDir, recursive: true); }
+        catch (IOException) { /* best effort */ }
+        catch (UnauthorizedAccessException) { /* best effort */ }
     }
 
     [Fact]
