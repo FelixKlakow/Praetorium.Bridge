@@ -140,7 +140,12 @@
     private RenderFragment<ToolCall> SignalingToolTemplate =>
         _signalingToolTemplate ??= tool =>
         {
-            if (!_signalingRenderData.TryGetValue(tool.Id, out var steps)) return null!;
+            if (!_signalingRenderData.TryGetValue(tool.Id, out var steps))
+            {
+                // Returning null! is the documented BlazorAgentView fallback:
+                // the component renders the default Input/Output view for this tool.
+                return null!;
+            }
             return __builder => RenderSignalingSteps(__builder, steps);
         };
 
@@ -383,8 +388,9 @@
                     }
 
                     _signalingRenderData[toolCallId] = steps;
-                    // Clear Input/Output — the custom renderer shows the full signaling flow
-                    toolCall = new ToolCall { Id = toolCallId, ToolName = toolCall.ToolName, State = state };
+                    // Input and Output are intentionally omitted: the custom ToolContentTemplate
+                    // renders the full signaling flow instead of the default I/O display.
+                    toolCall = new ToolCall { Id = toolCallId, ToolName = toolCall.ToolName, State = state, Input = null, Output = null };
                 }
 
                 if (pendingTools == null)
