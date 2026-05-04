@@ -1,8 +1,6 @@
 @page "/sessions"
 @rendermode InteractiveServer
 @using System.Threading
-@using Ganss.Xss
-@using Markdig
 @using Praetorium.Bridge.Agents
 @using Praetorium.Bridge.Sessions
 @using Praetorium.Bridge.Web.Services
@@ -98,7 +96,7 @@
                 <div class="status-message error inline">@lastError</div>
             }
 
-            <div class="transcript-scroll">
+            <div class="transcript-chat-wrapper">
                 @if (string.IsNullOrEmpty(selectedSessionId))
                 {
                     <div class="empty-state small">Pick a session on the left to see its live transcript.</div>
@@ -109,163 +107,15 @@
                 }
                 else
                 {
-                    var toolPairs = BuildToolPairs(transcript);
-                    @for (int i = 0; i < transcript.Count; i++)
-                    {
-                        if (toolPairs.SkipIndices.Contains(i)) { continue; }
-                        var entry = transcript[i];
-                        var isToolStart = entry.Source == SessionTranscriptSource.Agent
-                            && entry.Kind == nameof(AgentActivityKind.ToolStart);
-                        SessionTranscriptEntry? completeEntry = null;
-                        if (isToolStart && toolPairs.StartToComplete.TryGetValue(i, out var completeIdx))
-                        {
-                            completeEntry = transcript[completeIdx];
-                        }
-
-                        if (isToolStart && IsThoughtTool(entry.Title))
-                        {
-                            var thoughtText = ExtractThoughtText(entry.Details) ?? entry.Details;
-                            <div class="transcript-entry agent agent-thought">
-                                <span class="entry-time-float">@entry.Timestamp.ToLocalTime().ToString("HH:mm:ss.fff")</span>
-                                @if (!string.IsNullOrEmpty(thoughtText))
-                                {
-                                    <div class="entry-details entry-details--thought">@((MarkupString)RenderMarkdown(thoughtText))</div>
-                                }
-                            </div>
-                        }
-                        else if (isToolStart)
-                        {
-                            var status = completeEntry is null
-                                ? "pending"
-                                : (completeEntry.Details?.Contains("success=False", StringComparison.Ordinal) == true
-                                    ? "error"
-                                    : "ok");
-                            toolPairs.StartToSignals.TryGetValue(i, out var signalIndices);
-                            var hasSignals = signalIndices != null && signalIndices.Count > 0;
-                            var toolCallClass = $"transcript-entry agent tool-call tool-call--{status}{(hasSignals ? " tool-call--signaling" : string.Empty)}";
-                            <div class="@toolCallClass">
-                                <div class="entry-head">
-                                    <span class="entry-source">@entry.Source</span>
-                                    <span class="entry-kind">@(hasSignals ? "Signaling tool" : "Tool")</span>
-                                    @if (!string.IsNullOrEmpty(entry.Title))
-                                    {
-                                        <span class="entry-title">@entry.Title</span>
-                                    }
-                                    <span class="entry-time">@entry.Timestamp.ToLocalTime().ToString("HH:mm:ss.fff")</span>
-                                    <span class="tool-status tool-status--@status" title="@ToolStatusTitle(status, completeEntry)">
-                                        @ToolStatusIcon(status)
-                                    </span>
-                                </div>
-                                @if (hasSignals)
-                                {
-                                    <div class="tool-step">
-                                        <div class="tool-step-label">Parameters (agent → tool)</div>
-                                        @if (!string.IsNullOrEmpty(entry.Details))
-                                        {
-                                            <pre class="entry-details">@entry.Details</pre>
-                                        }
-                                        else
-                                        {
-                                            <div class="tool-step-empty">(no arguments)</div>
-                                        }
-                                    </div>
-                                    @foreach (var sIdx in signalIndices!)
-                                    {
-                                        var s = transcript[sIdx];
-                                        var direction = SignalingDirectionFromTitle(s.Title);
-                                        var label = SignalingStepLabel(direction, s.Kind);
-                                        <div class="tool-step tool-step--@(direction?.ToLowerInvariant() ?? "signal")">
-                                            <div class="tool-step-label">
-                                                <span class="tool-step-arrow">@SignalingArrow(direction)</span>
-                                                @label
-                                                <span class="tool-step-time">@s.Timestamp.ToLocalTime().ToString("HH:mm:ss.fff")</span>
-                                            </div>
-                                            @if (!string.IsNullOrEmpty(s.Details))
-                                            {
-                                                <pre class="entry-details">@s.Details</pre>
-                                            }
-                                            else
-                                            {
-                                                <div class="tool-step-empty">(no payload)</div>
-                                            }
-                                        </div>
-                                    }
-                                    @if (completeEntry is not null)
-                                    {
-                                        <div class="tool-step tool-step--complete">
-                                            <div class="tool-step-label">
-                                                <span class="tool-step-arrow">↩</span>
-                                                Returned to agent
-                                                <span class="tool-step-time">@completeEntry.Timestamp.ToLocalTime().ToString("HH:mm:ss.fff")</span>
-                                            </div>
-                                            @if (!string.IsNullOrEmpty(completeEntry.Details))
-                                            {
-                                                <pre class="entry-details @(status == "error" ? "entry-details--tool-error" : null)">@completeEntry.Details</pre>
-                                            }
-                                        </div>
-                                    }
-                                }
-                                else
-                                {
-                                    @if (!string.IsNullOrEmpty(entry.Details))
-                                    {
-                                        <pre class="entry-details">@entry.Details</pre>
-                                    }
-                                    @if (completeEntry is not null
-                                         && !string.IsNullOrEmpty(completeEntry.Details)
-                                         && status == "error")
-                                    {
-                                        <pre class="entry-details entry-details--tool-error">@completeEntry.Details</pre>
-                                    }
-                                }
-                            </div>
-                        }
-                        else if (entry.Source == SessionTranscriptSource.Agent && entry.Kind == nameof(AgentActivityKind.AssistantMessage))
-                        {
-                            <div class="transcript-entry agent agent-message">
-                                <span class="entry-time-float">@entry.Timestamp.ToLocalTime().ToString("HH:mm:ss.fff")</span>
-                                @if (!string.IsNullOrEmpty(entry.Details))
-                                {
-                                    <div class="entry-details entry-details--message">@((MarkupString)RenderMarkdown(entry.Details!))</div>
-                                }
-                            </div>
-                        }
-                        else
-                        {
-                            <div class="transcript-entry @SourceClass(entry.Source) @EntryKindClass(entry)">
-                                <div class="entry-head">
-                                    <span class="entry-source">@entry.Source</span>
-                                    <span class="entry-kind">@entry.Kind</span>
-                                    @if (!string.IsNullOrEmpty(entry.Title))
-                                    {
-                                        <span class="entry-title">@entry.Title</span>
-                                    }
-                                    <span class="entry-time">@entry.Timestamp.ToLocalTime().ToString("HH:mm:ss.fff")</span>
-                                </div>
-                                @if (!string.IsNullOrEmpty(entry.Details))
-                                {
-                                    if (entry.Source == SessionTranscriptSource.Lifecycle && entry.Kind == "Prompt")
-                                    {
-                                        <details class="entry-prompt-wrapper">
-                                            <summary class="entry-prompt-summary">Show system prompt</summary>
-                                            <pre class="entry-details entry-details--prompt">@entry.Details</pre>
-                                        </details>
-                                    }
-                                    else if (entry.Source == SessionTranscriptSource.Lifecycle && entry.Kind == "Turn Started")
-                                    {
-                                        <details class="entry-prompt-wrapper" open>
-                                            <summary class="entry-prompt-summary">Show tool prompt</summary>
-                                            <pre class="entry-details entry-details--prompt">@entry.Details</pre>
-                                        </details>
-                                    }
-                                    else
-                                    {
-                                        <pre class="entry-details">@entry.Details</pre>
-                                    }
-                                }
-                            </div>
-                        }
-                    }
+                    <AgentChatView Messages="chatMessages"
+                                   ToolContentTemplate="SignalingToolTemplate"
+                                   Options="@(new AgentChatOptions
+                                   {
+                                       AutoScroll = autoFollow,
+                                       ShowTimestamps = true,
+                                       EnableMarkdown = true,
+                                       ToolCallDisplay = ToolCallDisplayMode.CollapsibleExpanded,
+                                   })" />
                 }
             </div>
         </section>
@@ -275,6 +125,9 @@
 @code {
     private List<SessionInfo> sessions = new();
     private List<SessionTranscriptEntry> transcript = new();
+    private List<ChatMessage> chatMessages = new();
+    private readonly Dictionary<string, List<SignalingStep>> _signalingRenderData = new();
+    private RenderFragment<ToolCall>? _signalingToolTemplate;
     private string? selectedSessionId;
     private bool autoFollow = true;
     private bool isLoading;
@@ -283,6 +136,13 @@
     private string? lastError;
     private CancellationTokenSource? cts;
     private readonly HashSet<string> clearedLocally = new(StringComparer.Ordinal);
+
+    private RenderFragment<ToolCall> SignalingToolTemplate =>
+        _signalingToolTemplate ??= tool =>
+        {
+            if (!_signalingRenderData.TryGetValue(tool.Id, out var steps)) return null!;
+            return __builder => RenderSignalingSteps(__builder, steps);
+        };
 
     protected override async Task OnInitializedAsync()
     {
@@ -324,6 +184,7 @@
         selectedSessionId = sessionId;
         transcript = Activity.GetTranscript(sessionId).ToList();
         clearedLocally.Remove(sessionId);
+        RebuildChatMessages();
         StateHasChanged();
     }
 
@@ -331,6 +192,8 @@
     {
         if (string.IsNullOrEmpty(selectedSessionId)) return;
         transcript = new List<SessionTranscriptEntry>();
+        chatMessages = new List<ChatMessage>();
+        _signalingRenderData.Clear();
         clearedLocally.Add(selectedSessionId);
         StateHasChanged();
     }
@@ -398,6 +261,7 @@
         InvokeAsync(() =>
         {
             transcript.Add(entry);
+            RebuildChatMessages();
             StateHasChanged();
         });
     }
@@ -410,6 +274,315 @@
         });
     }
 
+    private void RebuildChatMessages()
+    {
+        chatMessages = BuildChatMessages(transcript);
+    }
+
+    private List<ChatMessage> BuildChatMessages(IReadOnlyList<SessionTranscriptEntry> entries)
+    {
+        _signalingRenderData.Clear();
+        var result = new List<ChatMessage>();
+        var toolPairs = BuildToolPairs(entries);
+
+        List<ToolCall>? pendingTools = null;
+        DateTimeOffset pendingStart = default;
+
+        void FlushPendingTools()
+        {
+            if (pendingTools == null) return;
+            result.Add(new ChatMessage
+            {
+                Role = MessageRole.Assistant,
+                Timestamp = pendingStart,
+                RoleLabel = "",
+                ShowTimestamp = false,
+                ToolCalls = pendingTools,
+            });
+            pendingTools = null;
+        }
+
+        for (int i = 0; i < entries.Count; i++)
+        {
+            if (toolPairs.SkipIndices.Contains(i)) continue;
+
+            var entry = entries[i];
+            bool isToolStart = entry.Source == SessionTranscriptSource.Agent
+                && entry.Kind == nameof(AgentActivityKind.ToolStart);
+
+            if (isToolStart && IsThoughtTool(entry.Title))
+            {
+                FlushPendingTools();
+                var thoughtText = ExtractThoughtText(entry.Details) ?? entry.Details;
+                if (!string.IsNullOrWhiteSpace(thoughtText))
+                {
+                    var capturedText = thoughtText;
+                    result.Add(new ChatMessage
+                    {
+                        Role = MessageRole.Assistant,
+                        Timestamp = entry.Timestamp,
+                        RoleLabel = "",
+                        ShowTimestamp = false,
+                        CustomContent = b =>
+                        {
+                            b.OpenElement(0, "div");
+                            b.AddAttribute(1, "class", "pbt-thought");
+                            b.AddContent(2, capturedText);
+                            b.CloseElement();
+                        },
+                    });
+                }
+                continue;
+            }
+
+            if (isToolStart)
+            {
+                SessionTranscriptEntry? completeEntry = toolPairs.StartToComplete.TryGetValue(i, out var ci)
+                    ? entries[ci] : null;
+                toolPairs.StartToSignals.TryGetValue(i, out var signalIndices);
+
+                bool isError = completeEntry?.Details?.Contains("success=False", StringComparison.Ordinal) == true;
+                ToolState state = completeEntry == null ? ToolState.Running
+                    : isError ? ToolState.Failed
+                    : ToolState.Success;
+
+                var toolCallId = $"tc-{i}";
+                var toolCall = new ToolCall
+                {
+                    Id = toolCallId,
+                    ToolName = entry.Title ?? "tool",
+                    Input = entry.Details,
+                    Output = isError ? completeEntry?.Details : null,
+                    State = state,
+                };
+
+                if (signalIndices != null && signalIndices.Count > 0)
+                {
+                    var steps = new List<SignalingStep>();
+                    if (!string.IsNullOrEmpty(entry.Details))
+                        steps.Add(new SignalingStep("params", "Parameters (agent → tool)", entry.Details, entry.Timestamp));
+
+                    foreach (var sIdx in signalIndices)
+                    {
+                        var s = entries[sIdx];
+                        var direction = SignalingDirectionFromTitle(s.Title);
+                        steps.Add(new SignalingStep(
+                            direction?.ToLowerInvariant() ?? "signal",
+                            SignalingStepLabel(direction, s.Kind),
+                            s.Details,
+                            s.Timestamp));
+                    }
+
+                    if (completeEntry != null)
+                    {
+                        steps.Add(new SignalingStep(
+                            "complete",
+                            "Returned to agent",
+                            isError ? completeEntry.Details : null,
+                            completeEntry.Timestamp));
+                    }
+
+                    _signalingRenderData[toolCallId] = steps;
+                    // Clear Input/Output — the custom renderer shows the full signaling flow
+                    toolCall = new ToolCall { Id = toolCallId, ToolName = toolCall.ToolName, State = state };
+                }
+
+                if (pendingTools == null)
+                {
+                    pendingTools = new List<ToolCall>();
+                    pendingStart = entry.Timestamp;
+                }
+                pendingTools.Add(toolCall);
+                continue;
+            }
+
+            // Non-tool entries: flush any accumulated tool calls first
+            FlushPendingTools();
+
+            if (entry.Source == SessionTranscriptSource.Agent
+                && entry.Kind == nameof(AgentActivityKind.AssistantMessage))
+            {
+                result.Add(new ChatMessage
+                {
+                    Role = MessageRole.Assistant,
+                    Content = entry.Details ?? "",
+                    Timestamp = entry.Timestamp,
+                });
+            }
+            else if (entry.Source == SessionTranscriptSource.Agent
+                && entry.Kind == nameof(AgentActivityKind.Idle))
+            {
+                // Idle events do not add value in the chat view
+            }
+            else if (entry.Source == SessionTranscriptSource.Agent
+                && entry.Kind == nameof(AgentActivityKind.Error))
+            {
+                var errorText = entry.Details ?? "Agent error";
+                result.Add(new ChatMessage
+                {
+                    Role = MessageRole.System,
+                    Timestamp = entry.Timestamp,
+                    CustomContent = b =>
+                    {
+                        b.OpenElement(0, "div");
+                        b.AddAttribute(1, "class", "pbt-error-msg");
+                        b.AddContent(2, errorText);
+                        b.CloseElement();
+                    },
+                });
+            }
+            else
+            {
+                var capturedEntry = entry;
+                result.Add(new ChatMessage
+                {
+                    Role = MessageRole.System,
+                    Timestamp = entry.Timestamp,
+                    RoleLabel = "",
+                    ShowTimestamp = false,
+                    CustomContent = b => RenderLifecycleEntry(b, capturedEntry),
+                });
+            }
+        }
+
+        FlushPendingTools();
+        return result;
+    }
+
+    private static void RenderSignalingSteps(Microsoft.AspNetCore.Components.Rendering.RenderTreeBuilder b, List<SignalingStep> steps)
+    {
+        int seq = 0;
+        b.OpenElement(seq++, "div");
+        b.AddAttribute(seq++, "class", "pbt-signaling-steps");
+        foreach (var step in steps)
+        {
+            b.OpenElement(seq++, "div");
+            b.AddAttribute(seq++, "class", $"pbt-sig-step pbt-sig-step--{step.StepKind}");
+
+            b.OpenElement(seq++, "div");
+            b.AddAttribute(seq++, "class", "pbt-sig-step-header");
+
+            b.OpenElement(seq++, "span");
+            b.AddAttribute(seq++, "class", "pbt-sig-step-arrow");
+            b.AddContent(seq++, StepArrow(step.StepKind));
+            b.CloseElement();
+
+            b.OpenElement(seq++, "span");
+            b.AddAttribute(seq++, "class", "pbt-sig-step-label");
+            b.AddContent(seq++, step.Label);
+            b.CloseElement();
+
+            b.OpenElement(seq++, "span");
+            b.AddAttribute(seq++, "class", "pbt-sig-step-time");
+            b.AddContent(seq++, step.Time.ToLocalTime().ToString("HH:mm:ss.fff"));
+            b.CloseElement();
+
+            b.CloseElement(); // pbt-sig-step-header
+
+            if (!string.IsNullOrEmpty(step.Payload))
+            {
+                b.OpenElement(seq++, "pre");
+                b.AddAttribute(seq++, "class", "pbt-sig-step-payload");
+                b.AddContent(seq++, step.Payload);
+                b.CloseElement();
+            }
+            else
+            {
+                b.OpenElement(seq++, "div");
+                b.AddAttribute(seq++, "class", "pbt-sig-step-empty");
+                b.AddContent(seq++, "(no payload)");
+                b.CloseElement();
+            }
+
+            b.CloseElement(); // pbt-sig-step
+        }
+        b.CloseElement(); // pbt-signaling-steps
+    }
+
+    private static void RenderLifecycleEntry(Microsoft.AspNetCore.Components.Rendering.RenderTreeBuilder b, SessionTranscriptEntry entry)
+    {
+        int seq = 0;
+        b.OpenElement(seq++, "div");
+        b.AddAttribute(seq++, "class", $"pbt-lifecycle {EntryKindClass(entry)}");
+
+        b.OpenElement(seq++, "div");
+        b.AddAttribute(seq++, "class", "pbt-lc-row");
+
+        b.OpenElement(seq++, "span");
+        b.AddAttribute(seq++, "class", "pbt-lc-source");
+        b.AddContent(seq++, entry.Source.ToString());
+        b.CloseElement();
+
+        b.OpenElement(seq++, "span");
+        b.AddAttribute(seq++, "class", "pbt-lc-kind");
+        b.AddContent(seq++, entry.Kind);
+        b.CloseElement();
+
+        if (!string.IsNullOrEmpty(entry.Title))
+        {
+            b.OpenElement(seq++, "span");
+            b.AddAttribute(seq++, "class", "pbt-lc-title");
+            b.AddContent(seq++, entry.Title);
+            b.CloseElement();
+        }
+
+        b.OpenElement(seq++, "span");
+        b.AddAttribute(seq++, "class", "pbt-lc-time");
+        b.AddContent(seq++, entry.Timestamp.ToLocalTime().ToString("HH:mm:ss.fff"));
+        b.CloseElement();
+
+        b.CloseElement(); // pbt-lc-row
+
+        if (!string.IsNullOrEmpty(entry.Details))
+        {
+            if (entry.Source == SessionTranscriptSource.Lifecycle && entry.Kind == "Prompt")
+            {
+                b.OpenElement(seq++, "details");
+                b.AddAttribute(seq++, "class", "pbt-lc-details-toggle");
+                b.OpenElement(seq++, "summary");
+                b.AddContent(seq++, "Show system prompt");
+                b.CloseElement();
+                b.OpenElement(seq++, "pre");
+                b.AddAttribute(seq++, "class", "pbt-lc-details");
+                b.AddContent(seq++, entry.Details);
+                b.CloseElement();
+                b.CloseElement();
+            }
+            else if (entry.Source == SessionTranscriptSource.Lifecycle && entry.Kind == "Turn Started")
+            {
+                b.OpenElement(seq++, "details");
+                b.AddAttribute(seq++, "class", "pbt-lc-details-toggle");
+                b.AddAttribute(seq++, "open", true);
+                b.OpenElement(seq++, "summary");
+                b.AddContent(seq++, "Show tool prompt");
+                b.CloseElement();
+                b.OpenElement(seq++, "pre");
+                b.AddAttribute(seq++, "class", "pbt-lc-details");
+                b.AddContent(seq++, entry.Details);
+                b.CloseElement();
+                b.CloseElement();
+            }
+            else
+            {
+                b.OpenElement(seq++, "pre");
+                b.AddAttribute(seq++, "class", "pbt-lc-details");
+                b.AddContent(seq++, entry.Details);
+                b.CloseElement();
+            }
+        }
+
+        b.CloseElement(); // pbt-lifecycle
+    }
+
+    private static string StepArrow(string stepKind) => stepKind switch
+    {
+        "outbound" => "→",
+        "inbound" => "←",
+        "complete" => "↩",
+        "params" => "⟶",
+        _ => "•",
+    };
+
     private static string StateClass(SessionState s) => s switch
     {
         SessionState.Active => "active",
@@ -418,14 +591,6 @@
         SessionState.Pooled => "pooled",
         SessionState.Crashed => "crashed",
         SessionState.Spawning => "spawning",
-        _ => "other",
-    };
-
-    private static string SourceClass(SessionTranscriptSource s) => s switch
-    {
-        SessionTranscriptSource.Lifecycle => "lifecycle",
-        SessionTranscriptSource.Signaling => "signaling",
-        SessionTranscriptSource.Agent => "agent",
         _ => "other",
     };
 
@@ -552,13 +717,6 @@
         _ => $"Signal ({kind})",
     };
 
-    private static string SignalingArrow(string? direction) => direction switch
-    {
-        "Outbound" => "→",
-        "Inbound" => "←",
-        _ => "•",
-    };
-
     private static readonly HashSet<string> ThoughtToolNames = new(StringComparer.OrdinalIgnoreCase)
     {
         "report_intent",
@@ -601,33 +759,11 @@
         return null;
     }
 
-    private static string ToolStatusIcon(string status) => status switch
-    {
-        "ok" => "✓",
-        "error" => "✕",
-        _ => "…",
-    };
-
-    private static string ToolStatusTitle(string status, SessionTranscriptEntry? complete) => status switch
-    {
-        "ok" => "Tool completed successfully",
-        "error" => complete?.Details ?? "Tool failed",
-        _ => "Tool running…",
-    };
-
     private static readonly System.Text.Json.JsonSerializerOptions TranscriptExportOptions = new()
     {
         WriteIndented = true,
         Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() },
     };
-
-    private static readonly MarkdownPipeline MarkdownPipeline =
-        new MarkdownPipelineBuilder().UseAdvancedExtensions().DisableHtml().Build();
-
-    private static readonly HtmlSanitizer Sanitizer = new();
-
-    private static string RenderMarkdown(string markdown) =>
-        Sanitizer.Sanitize(Markdown.ToHtml(markdown, MarkdownPipeline));
 
     public void Dispose()
     {
@@ -636,4 +772,10 @@
         cts?.Cancel();
         cts?.Dispose();
     }
+
+    private sealed record SignalingStep(
+        string StepKind,
+        string? Label,
+        string? Payload,
+        DateTimeOffset Time);
 }
