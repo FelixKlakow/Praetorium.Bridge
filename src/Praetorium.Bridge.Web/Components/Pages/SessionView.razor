@@ -108,14 +108,9 @@
                 else
                 {
                     <AgentChatView Messages="chatMessages"
+                                   SystemPrompt="@_systemPrompt"
                                    ToolContentTemplate="SignalingToolTemplate"
-                                   Options="@(new AgentChatOptions
-                                   {
-                                       AutoScroll = autoFollow,
-                                       ShowTimestamps = true,
-                                       EnableMarkdown = true,
-                                       ToolCallDisplay = ToolCallDisplayMode.CollapsibleExpanded,
-                                   })" />
+                                   Options="@_chatOptions" />
                 }
             </div>
         </section>
@@ -126,13 +121,29 @@
     private List<SessionInfo> sessions = new();
     private List<SessionTranscriptEntry> transcript = new();
     private List<ChatMessage> chatMessages = new();
+    private string? _systemPrompt;
     private readonly Dictionary<string, List<SignalingStep>> _signalingRenderData = new();
     private RenderFragment<ToolCall>? _signalingToolTemplate;
     private string? selectedSessionId;
-    private bool autoFollow = true;
+    private bool _autoFollow = true;
+    private bool autoFollow
+    {
+        get => _autoFollow;
+        set { _autoFollow = value; _chatOptions.AutoScroll = value; }
+    }
+    private readonly AgentChatOptions _chatOptions = new()
+    {
+        AutoScroll = true,
+        ShowTimestamps = true,
+        EnableMarkdown = true,
+        SystemPromptMarkdown = true,
+        ToolCallDisplay = ToolCallDisplayMode.Collapsible,
+        CssVariables = new() { ["--bav-user-bubble-bg"] = "#4b5563", ["--bav-user-bubble-text"] = "#f1f5f9" },
+    };
     private bool isLoading;
     private bool isCancelling;
     private bool isSaving;
+    private bool _rebuildQueued;
     private string? lastError;
     private CancellationTokenSource? cts;
     private readonly HashSet<string> clearedLocally = new(StringComparer.Ordinal);
@@ -142,9 +153,12 @@
         {
             if (!_signalingRenderData.TryGetValue(tool.Id, out var steps))
             {
-                // Returning null! is the documented BlazorAgentView fallback:
-                // the component renders the default Input/Output view for this tool.
+                // BlazorAgentView 1.1.0 — README "Custom tool output renderer":
+                // "Return null! for tools you don't customise — they automatically fall back
+                // to the default input/output display."
+#pragma warning disable CS8603 // Intentional null return: documented BlazorAgentView 1.1.0 fallback contract
                 return null!;
+#pragma warning restore CS8603
             }
             return __builder => RenderSignalingSteps(__builder, steps);
         };
@@ -266,8 +280,16 @@
         InvokeAsync(() =>
         {
             transcript.Add(entry);
-            RebuildChatMessages();
-            StateHasChanged();
+            if (_rebuildQueued) return;
+            _rebuildQueued = true;
+            // Defer the rebuild so that multiple entries arriving in the same
+            // render cycle are coalesced into a single BuildChatMessages call.
+            InvokeAsync(() =>
+            {
+                _rebuildQueued = false;
+                RebuildChatMessages();
+                StateHasChanged();
+            });
         });
     }
 
@@ -287,6 +309,7 @@
     private List<ChatMessage> BuildChatMessages(IReadOnlyList<SessionTranscriptEntry> entries)
     {
         _signalingRenderData.Clear();
+        _systemPrompt = null;
         var result = new List<ChatMessage>();
         var toolPairs = BuildToolPairs(entries);
 
@@ -352,29 +375,22 @@
                     : ToolState.Success;
 
                 var toolCallId = $"tc-{i}";
-                var toolCall = new ToolCall
-                {
-                    Id = toolCallId,
-                    ToolName = entry.Title ?? "tool",
-                    Input = entry.Details,
-                    Output = isError ? completeEntry?.Details : null,
-                    State = state,
-                };
+                bool isSignaling = signalIndices != null && signalIndices.Count > 0;
 
-                if (signalIndices != null && signalIndices.Count > 0)
+                if (isSignaling)
                 {
                     var steps = new List<SignalingStep>();
                     if (!string.IsNullOrEmpty(entry.Details))
-                        steps.Add(new SignalingStep("params", "Parameters (agent → tool)", entry.Details, entry.Timestamp));
+                        steps.Add(new SignalingStep("params", "Parameters (agent → tool)", TryPrettyJson(entry.Details), entry.Timestamp));
 
-                    foreach (var sIdx in signalIndices)
+                    foreach (var sIdx in signalIndices!)
                     {
                         var s = entries[sIdx];
                         var direction = SignalingDirectionFromTitle(s.Title);
                         steps.Add(new SignalingStep(
                             direction?.ToLowerInvariant() ?? "signal",
                             SignalingStepLabel(direction, s.Kind),
-                            s.Details,
+                            TryPrettyJson(s.Details),
                             s.Timestamp));
                     }
 
@@ -383,15 +399,25 @@
                         steps.Add(new SignalingStep(
                             "complete",
                             "Returned to agent",
-                            isError ? completeEntry.Details : null,
+                            isError ? TryPrettyJson(completeEntry.Details) : null,
                             completeEntry.Timestamp));
                     }
 
                     _signalingRenderData[toolCallId] = steps;
-                    // Input and Output are intentionally omitted: the custom ToolContentTemplate
-                    // renders the full signaling flow instead of the default I/O display.
-                    toolCall = new ToolCall { Id = toolCallId, ToolName = toolCall.ToolName, State = state, Input = null, Output = null };
                 }
+
+                // Signaling tools: Input/Output omitted — ToolContentTemplate renders the full flow.
+                // Non-signaling tools: show pretty-printed I/O in the default collapsed card.
+                var toolCall = new ToolCall
+                {
+                    Id = toolCallId,
+                    ToolName = entry.Title ?? "tool",
+                    Input = isSignaling ? null : TryPrettyJson(entry.Details),
+                    Output = isSignaling ? null : (isError ? TryPrettyJson(completeEntry?.Details) : null),
+                    State = state,
+                    DisplayMode = isSignaling ? ToolCallDisplayMode.CollapsibleExpanded : ToolCallDisplayMode.Collapsible,
+                    Subtitle = isSignaling ? null : ExtractSubtitle(entry.Details),
+                };
 
                 if (pendingTools == null)
                 {
@@ -437,6 +463,23 @@
                     },
                 });
             }
+            else if (entry.Source == SessionTranscriptSource.Lifecycle && entry.Kind == "Prompt")
+            {
+                // Passed to AgentChatView as SystemPrompt banner; not added to the chat message list.
+                _systemPrompt = entry.Details;
+            }
+            else if (entry.Source == SessionTranscriptSource.Lifecycle && entry.Kind == "Caller Invoked")
+            {
+                var capturedEntry = entry;
+                result.Add(new ChatMessage
+                {
+                    Role = MessageRole.User,
+                    RoleLabel = "Caller",
+                    Timestamp = entry.Timestamp,
+                    ShowTimestamp = true,
+                    CustomContent = b => RenderCallerInvokedContent(b, capturedEntry),
+                });
+            }
             else
             {
                 var capturedEntry = entry;
@@ -455,48 +498,57 @@
         return result;
     }
 
+    // Slots used per step in RenderSignalingSteps — must be >= the number of
+    // OpenElement/AddAttribute/AddContent calls inside one loop iteration (currently 14).
+    private const int SignalingStepSeqSlots = 20;
+
     private static void RenderSignalingSteps(Microsoft.AspNetCore.Components.Rendering.RenderTreeBuilder b, List<SignalingStep> steps)
     {
-        int seq = 0;
-        b.OpenElement(seq++, "div");
-        b.AddAttribute(seq++, "class", "pbt-signaling-steps");
-        foreach (var step in steps)
+        // Sequence numbers must be stable across renders so Blazor's differ can
+        // match nodes correctly. Use a fixed base per step index (stepIndex * slots)
+        // rather than a running counter that shifts when the step count changes.
+        b.OpenElement(0, "div");
+        b.AddAttribute(1, "class", "pbt-signaling-steps");
+        for (int stepIndex = 0; stepIndex < steps.Count; stepIndex++)
         {
-            b.OpenElement(seq++, "div");
-            b.AddAttribute(seq++, "class", $"pbt-sig-step pbt-sig-step--{step.StepKind}");
+            var step = steps[stepIndex];
+            int s = 2 + stepIndex * SignalingStepSeqSlots;
 
-            b.OpenElement(seq++, "div");
-            b.AddAttribute(seq++, "class", "pbt-sig-step-header");
+            b.OpenElement(s + 0, "div");
+            b.AddAttribute(s + 1, "class", $"pbt-sig-step pbt-sig-step--{step.StepKind}");
 
-            b.OpenElement(seq++, "span");
-            b.AddAttribute(seq++, "class", "pbt-sig-step-arrow");
-            b.AddContent(seq++, StepArrow(step.StepKind));
+            b.OpenElement(s + 2, "div");
+            b.AddAttribute(s + 3, "class", "pbt-sig-step-header");
+
+            b.OpenElement(s + 4, "span");
+            b.AddAttribute(s + 5, "class", "pbt-sig-step-arrow");
+            b.AddContent(s + 6, StepArrow(step.StepKind));
             b.CloseElement();
 
-            b.OpenElement(seq++, "span");
-            b.AddAttribute(seq++, "class", "pbt-sig-step-label");
-            b.AddContent(seq++, step.Label);
+            b.OpenElement(s + 7, "span");
+            b.AddAttribute(s + 8, "class", "pbt-sig-step-label");
+            b.AddContent(s + 9, step.Label);
             b.CloseElement();
 
-            b.OpenElement(seq++, "span");
-            b.AddAttribute(seq++, "class", "pbt-sig-step-time");
-            b.AddContent(seq++, step.Time.ToLocalTime().ToString("HH:mm:ss.fff"));
+            b.OpenElement(s + 10, "span");
+            b.AddAttribute(s + 11, "class", "pbt-sig-step-time");
+            b.AddContent(s + 12, step.Time.ToLocalTime().ToString("HH:mm:ss.fff"));
             b.CloseElement();
 
             b.CloseElement(); // pbt-sig-step-header
 
             if (!string.IsNullOrEmpty(step.Payload))
             {
-                b.OpenElement(seq++, "pre");
-                b.AddAttribute(seq++, "class", "pbt-sig-step-payload");
-                b.AddContent(seq++, step.Payload);
+                b.OpenElement(s + 13, "pre");
+                b.AddAttribute(s + 14, "class", "pbt-sig-step-payload");
+                b.AddContent(s + 15, step.Payload);
                 b.CloseElement();
             }
             else
             {
-                b.OpenElement(seq++, "div");
-                b.AddAttribute(seq++, "class", "pbt-sig-step-empty");
-                b.AddContent(seq++, "(no payload)");
+                b.OpenElement(s + 13, "div");
+                b.AddAttribute(s + 14, "class", "pbt-sig-step-empty");
+                b.AddContent(s + 15, "(no payload)");
                 b.CloseElement();
             }
 
@@ -541,20 +593,7 @@
 
         if (!string.IsNullOrEmpty(entry.Details))
         {
-            if (entry.Source == SessionTranscriptSource.Lifecycle && entry.Kind == "Prompt")
-            {
-                b.OpenElement(seq++, "details");
-                b.AddAttribute(seq++, "class", "pbt-lc-details-toggle");
-                b.OpenElement(seq++, "summary");
-                b.AddContent(seq++, "Show system prompt");
-                b.CloseElement();
-                b.OpenElement(seq++, "pre");
-                b.AddAttribute(seq++, "class", "pbt-lc-details");
-                b.AddContent(seq++, entry.Details);
-                b.CloseElement();
-                b.CloseElement();
-            }
-            else if (entry.Source == SessionTranscriptSource.Lifecycle && entry.Kind == "Turn Started")
+            if (entry.Source == SessionTranscriptSource.Lifecycle && entry.Kind == "Turn Started")
             {
                 b.OpenElement(seq++, "details");
                 b.AddAttribute(seq++, "class", "pbt-lc-details-toggle");
@@ -579,6 +618,65 @@
 
         b.CloseElement(); // pbt-lifecycle
     }
+
+    private static void RenderCallerInvokedContent(Microsoft.AspNetCore.Components.Rendering.RenderTreeBuilder b, SessionTranscriptEntry entry)
+    {
+        int seq = 0;
+        if (!string.IsNullOrEmpty(entry.Title))
+        {
+            b.OpenElement(seq++, "div");
+            b.AddAttribute(seq++, "class", "pbt-caller-phase");
+            b.AddContent(seq++, entry.Title);
+            b.CloseElement();
+        }
+        if (!string.IsNullOrEmpty(entry.Details))
+        {
+            b.OpenElement(seq++, "pre");
+            b.AddAttribute(seq++, "class", "pbt-caller-details");
+            b.AddContent(seq++, TryPrettyJson(entry.Details));
+            b.CloseElement();
+        }
+    }
+
+    private static string? TryPrettyJson(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(text);
+            return System.Text.Json.JsonSerializer.Serialize(doc.RootElement, PrettyJsonOptions);
+        }
+        catch
+        {
+            return text;
+        }
+    }
+
+    private static readonly string[] SubtitleFieldNames = { "description", "command", "query", "path", "summary", "title", "name", "text", "message" };
+
+    private static string? ExtractSubtitle(string? inputJson)
+    {
+        if (string.IsNullOrWhiteSpace(inputJson)) return null;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(inputJson);
+            if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object) return null;
+            foreach (var field in SubtitleFieldNames)
+            {
+                if (doc.RootElement.TryGetProperty(field, out var prop)
+                    && prop.ValueKind == System.Text.Json.JsonValueKind.String)
+                {
+                    var value = prop.GetString();
+                    if (!string.IsNullOrWhiteSpace(value))
+                        return value.Length > 80 ? value[..80] + "\u2026" : value;
+                }
+            }
+        }
+        catch { }
+        return null;
+    }
+
+    private static readonly System.Text.Json.JsonSerializerOptions PrettyJsonOptions = new() { WriteIndented = true };
 
     private static string StepArrow(string stepKind) => stepKind switch
     {
