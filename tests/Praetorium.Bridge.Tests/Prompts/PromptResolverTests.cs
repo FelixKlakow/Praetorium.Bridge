@@ -91,9 +91,9 @@ public class PromptResolverTests : IDisposable
     }
 
     [Fact]
-    public async Task ResolveAsync_CachesFileContent_AcrossCalls_ButReRendersWithNewParameters()
+    public async Task ResolveAsync_PicksUpFileChanges_BetweenCalls()
     {
-        var promptFile = "cached.md";
+        var promptFile = "live-reload.md";
         var fullPath = Path.Combine(_tempDir, promptFile);
         await File.WriteAllTextAsync(fullPath, "Hello {{name}}!");
 
@@ -104,7 +104,7 @@ public class PromptResolverTests : IDisposable
             new Dictionary<string, JsonElement> { ["name"] = JE("Alice") },
             CancellationToken.None);
 
-        // Overwrite file: if cache works, the first content is reused.
+        // Overwrite the file: the next call must use the updated content.
         await File.WriteAllTextAsync(fullPath, "Changed {{name}}!");
 
         var second = await resolver.ResolveAsync(
@@ -113,8 +113,8 @@ public class PromptResolverTests : IDisposable
             CancellationToken.None);
 
         Assert.Equal("Hello Alice!", first);
-        // Demonstrates that parameters are re-applied even though file is cached.
-        Assert.Equal("Hello Bob!", second);
+        // File was updated, so the new template must be used.
+        Assert.Equal("Changed Bob!", second);
     }
 
     [Fact]

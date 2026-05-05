@@ -14,7 +14,6 @@ namespace Praetorium.Bridge.Prompts;
 public class PromptResolver : IPromptResolver
 {
     private readonly string _basePath;
-    private readonly Dictionary<string, string> _cache = new();
 
     /// <summary>
     /// Initializes a new instance of the PromptResolver class.
@@ -58,29 +57,21 @@ public class PromptResolver : IPromptResolver
         var fullPath = Path.Combine(_basePath, promptFile);
         fullPath = Path.GetFullPath(fullPath);
 
-        // Read prompt file (with simple caching)
+        // Read prompt file fresh every time so prompt edits take effect immediately
         string promptContent;
-        if (_cache.TryGetValue(fullPath, out var cached))
+        try
         {
-            promptContent = cached;
+            promptContent = await File.ReadAllTextAsync(fullPath, ct);
         }
-        else
+        catch (FileNotFoundException)
         {
-            try
-            {
-                promptContent = await File.ReadAllTextAsync(fullPath, ct);
-                _cache[fullPath] = promptContent;
-            }
-            catch (FileNotFoundException)
-            {
-                throw new InvalidOperationException(
-                    $"Prompt file not found: {fullPath}");
-            }
-            catch (IOException ex)
-            {
-                throw new InvalidOperationException(
-                    $"Error reading prompt file {fullPath}: {ex.Message}");
-            }
+            throw new InvalidOperationException(
+                $"Prompt file not found: {fullPath}");
+        }
+        catch (IOException ex)
+        {
+            throw new InvalidOperationException(
+                $"Error reading prompt file {fullPath}: {ex.Message}");
         }
 
         // Apply placeholder substitution

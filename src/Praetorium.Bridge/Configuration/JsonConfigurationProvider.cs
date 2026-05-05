@@ -127,6 +127,9 @@ public class JsonConfigurationProvider : IConfigurationProvider, IDisposable
                 }
                 _configuration = config;
             }
+
+            // Notify subscribers outside the lock so handlers can safely call back into the provider.
+            OnConfigurationChanged?.Invoke(config);
         }, ct);
     }
 
