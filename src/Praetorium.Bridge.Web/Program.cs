@@ -111,8 +111,19 @@ builder.Services.AddMcpServer(options =>
 
     // Register this server session so configuration-change notifications can
     // be broadcast to all currently-connected public MCP clients.
+    //
+    // IMPORTANT: context.Server is a per-request DestinationBoundMcpServer
+    // whose RelatedTransport is the POST transport handling tools/list. That
+    // POST transport is disposed when the request completes, so any
+    // notification sent through it never reaches the client's open GET SSE
+    // stream. The session-scoped McpServer (whose SendMessageAsync uses the
+    // session transport) is published on HttpContext.Features by the SDK's
+    // StreamableHttpHandler — that's the instance we must track.
     var tracker = services.GetRequiredService<McpServerTracker>();
-    tracker.Register(context.Server);
+    var sessionServer = httpContext?.Features.Get<McpServer>()
+        ?? throw new InvalidOperationException(
+            "Session-scoped McpServer is not available on HttpContext.Features.");
+    tracker.Register(sessionServer);
 
     var publicTools = definitions.Select(d => new Tool
     {

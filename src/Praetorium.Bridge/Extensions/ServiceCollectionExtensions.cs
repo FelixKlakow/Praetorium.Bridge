@@ -72,6 +72,13 @@ public static class ServiceCollectionExtensions
         // Register MCP server builder as singleton
         services.AddSingleton<McpServerTracker>();
         services.AddSingleton<McpServerBuilder>();
+        // Eagerly resolve McpServerBuilder at host start so its
+        // IConfigurationProvider.OnConfigurationChanged subscription is wired
+        // before any client connects or any SaveAsync is invoked. Without
+        // this, the singleton is only constructed on the first tools/list
+        // call, so configuration changes that happen prior to that point are
+        // silently dropped (no subscriber to broadcast tools/list_changed).
+        services.AddHostedService<McpServerBuilderInitializer>();
 
         // Register dynamic tool handler as singleton
         services.AddSingleton<DynamicToolHandler>();
